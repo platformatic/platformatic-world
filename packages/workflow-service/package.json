@@ -1,0 +1,24 @@
+{
+  "name": "@platformatic/workflow-service",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "test": "node --test --test-concurrency=1 test/*.test.ts"
+  },
+  "dependencies": {
+    "@fastify/error": "^4.1.0",
+    "fastify": "^5.3.3",
+    "pg": "^8.16.0",
+    "postgrator": "^8.0.0",
+    "undici": "^7.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.15.4"
+  }
+}

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: wf
+          POSTGRES_PASSWORD: wf
+          POSTGRES_DB: workflow
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U wf -d workflow"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run workflow-service tests
+        run: node --test --test-concurrency=1 packages/workflow-service/test/*.test.ts
+
+      - name: Start workflow service
+        run: |
+          node packages/workflow-service/src/server.ts &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3042/status > /dev/null 2>&1; then
+              echo "Service is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Service failed to start"
+          exit 1
+
+      - name: Run world-client integration tests
+        run: node --test packages/world-client/test/client.test.ts

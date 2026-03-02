@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: wf
+      POSTGRES_PASSWORD: wf
+      POSTGRES_DB: workflow
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wf -d workflow']
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
