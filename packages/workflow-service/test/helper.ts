@@ -67,6 +67,7 @@ export async function teardownTest (ctx: TestContext): Promise<void> {
     await ctx.app.pg.query('DELETE FROM workflow_runs WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_encryption_keys WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_deployment_versions WHERE application_id = $1', [applicationId])
+    await ctx.app.pg.query('DELETE FROM workflow_app_quotas WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_app_keys WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_app_k8s_bindings WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_applications WHERE id = $1', [applicationId])

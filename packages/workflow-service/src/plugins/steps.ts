@@ -24,19 +24,20 @@ export default async function stepsPlugin (app: FastifyInstance): Promise<void> 
     const query = request.query as { limit?: string; cursor?: string; resolveData?: string }
     const appId = request.appId
     const limit = Math.min(parseInt(query.limit || '100', 10), 1000)
-    const cursor = query.cursor ? parseInt(query.cursor, 10) : 0
+    const offset = query.cursor ? parseInt(query.cursor, 10) : 0
 
     const result = await app.pg.query(
       `SELECT * FROM workflow_steps
        WHERE run_id = $1 AND application_id = $2
        ORDER BY created_at ASC
-       LIMIT $3`,
-      [runId, appId, limit + 1]
+       LIMIT $3 OFFSET $4`,
+      [runId, appId, limit + 1, offset]
     )
 
     const hasMore = result.rows.length > limit
     const data = result.rows.slice(0, limit).map(row => formatStep(row, query.resolveData))
+    const nextCursor = hasMore ? String(offset + limit) : null
 
-    return { data, cursor: null, hasMore }
+    return { data, cursor: nextCursor, hasMore }
   })
 }

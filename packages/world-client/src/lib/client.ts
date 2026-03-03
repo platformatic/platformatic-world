@@ -19,10 +19,19 @@ export class HttpClient {
     this.#apiKey = config.apiKey
   }
 
-  async post (path: string, body: unknown): Promise<any> {
+  async post (path: string, body: unknown, query?: Record<string, string | undefined>): Promise<any> {
+    let fullPath = `${this.#baseUrl}${path}`
+    if (query) {
+      const url = new URL(`http://localhost${fullPath}`)
+      for (const [k, v] of Object.entries(query)) {
+        if (v !== undefined) url.searchParams.set(k, v)
+      }
+      fullPath = `${url.pathname}${url.search}`
+    }
+
     const response = await this.#pool.request({
       method: 'POST',
-      path: `${this.#baseUrl}${path}`,
+      path: fullPath,
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${this.#apiKey}`,

@@ -18,7 +18,7 @@ export default async function drainingPlugin (app: FastifyInstance): Promise<voi
       app.pg.query(
         `SELECT COUNT(*)::int as count FROM workflow_hooks h
          JOIN workflow_runs r ON h.run_id = r.id
-         WHERE h.application_id = $1 AND r.deployment_id = $2`,
+         WHERE h.application_id = $1 AND r.deployment_id = $2 AND h.status NOT IN ('disposed')`,
         [appId, deploymentId]
       ),
       app.pg.query(
@@ -70,13 +70,15 @@ export default async function drainingPlugin (app: FastifyInstance): Promise<voi
         )
       }
 
-      // 3. Clean up hooks for cancelled runs
-      await client.query(
-        `DELETE FROM workflow_hooks WHERE application_id = $1 AND run_id IN (
-           SELECT id FROM workflow_runs WHERE application_id = $1 AND deployment_id = $2
-         )`,
-        [appId, deploymentId]
-      )
+      // 3. Dispose hooks for the cancelled runs only
+      if (cancelledRuns.rows.length > 0) {
+        const runIds = cancelledRuns.rows.map(r => r.id)
+        await client.query(
+          `UPDATE workflow_hooks SET status = 'disposed', disposed_at = NOW()
+           WHERE application_id = $1 AND run_id = ANY($2::varchar[]) AND status != 'disposed'`,
+          [appId, runIds]
+        )
+      }
 
       // 4. Dead-letter queued messages
       const deadLettered = await client.query(

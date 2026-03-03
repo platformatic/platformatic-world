@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { RunNotFound, HookTokenConflict, BadRequest } from '../lib/errors.ts'
+import { checkRunQuota, checkEventQuota } from './quotas.ts'
 import type pg from 'pg'
 
 // Encode data as binary for storage. Supports both Uint8Array (base64) and JSON.
@@ -97,10 +98,11 @@ function formatStep (row: any, resolveData?: string) {
 }
 
 function formatHook (row: any) {
-  return {
+  const hook: any = {
     runId: row.run_id,
     hookId: row.id,
     token: row.token,
+    status: row.status,
     ownerId: row.owner_id,
     projectId: row.project_id,
     environment: row.environment,
@@ -108,6 +110,9 @@ function formatHook (row: any) {
     createdAt: row.created_at,
     specVersion: row.spec_version,
   }
+  if (row.received_at) hook.receivedAt = row.received_at
+  if (row.disposed_at) hook.disposedAt = row.disposed_at
+  return hook
 }
 
 function formatWait (row: any) {
@@ -141,6 +146,13 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
     const body = request.body as any
     const appId = request.appId
     const resolveData = (request.query as any).resolveData
+
+    // Quota checks
+    if (body.eventType === 'run_created') {
+      await checkRunQuota(app, appId)
+    } else if (rawRunId !== 'null') {
+      await checkEventQuota(app, appId, rawRunId)
+    }
 
     const client = await app.pg.connect()
     try {
@@ -189,7 +201,7 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
           )
           // Dispose all pending hooks for this run
           await client.query(
-            `DELETE FROM workflow_hooks WHERE run_id = $1 AND application_id = $2`,
+            `UPDATE workflow_hooks SET status = 'disposed', disposed_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status != 'disposed'`,
             [rawRunId, appId]
           )
           const eventRow = await insertEvent(client, rawRunId, appId, body)
@@ -209,7 +221,7 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
             [rawRunId, appId, error ? JSON.stringify(error) : null]
           )
           await client.query(
-            `DELETE FROM workflow_hooks WHERE run_id = $1 AND application_id = $2`,
+            `UPDATE workflow_hooks SET status = 'disposed', disposed_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status != 'disposed'`,
             [rawRunId, appId]
           )
           const eventRow = await insertEvent(client, rawRunId, appId, body)
@@ -226,7 +238,24 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
             [rawRunId, appId]
           )
           await client.query(
-            `DELETE FROM workflow_hooks WHERE run_id = $1 AND application_id = $2`,
+            `UPDATE workflow_hooks SET status = 'disposed', disposed_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status != 'disposed'`,
+            [rawRunId, appId]
+          )
+          const eventRow = await insertEvent(client, rawRunId, appId, body)
+          const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
+          if (!runRow) throw new RunNotFound(rawRunId)
+          result = { event: formatEvent(eventRow, resolveData), run: formatRun(runRow, resolveData) }
+          break
+        }
+
+        case 'run_expired': {
+          await client.query(
+            `UPDATE workflow_runs SET status = 'expired', expired_at = NOW(), completed_at = NOW(), updated_at = NOW()
+             WHERE id = $1 AND application_id = $2`,
+            [rawRunId, appId]
+          )
+          await client.query(
+            `UPDATE workflow_hooks SET status = 'disposed', disposed_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status != 'disposed'`,
             [rawRunId, appId]
           )
           const eventRow = await insertEvent(client, rawRunId, appId, body)
@@ -381,23 +410,36 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
         }
 
         case 'hook_received': {
-          const eventData = body.eventData || {}
-          // No direct update needed on hooks table since hooks are deleted on terminal state
+          // Update hook status to received
+          let hookRow = null
+          if (body.correlationId) {
+            const hookResult = await client.query(
+              `UPDATE workflow_hooks SET status = 'received', received_at = NOW()
+               WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3
+               RETURNING *`,
+              [rawRunId, body.correlationId, appId]
+            )
+            if (hookResult.rows.length > 0) hookRow = hookResult.rows[0]
+          }
           const eventRow = await insertEvent(client, rawRunId, appId, body)
-          result = { event: formatEvent(eventRow, resolveData) }
+          result = { event: formatEvent(eventRow, resolveData), hook: hookRow ? formatHook(hookRow) : undefined }
           break
         }
 
         case 'hook_disposed': {
-          // Remove the hook
+          // Mark hook as disposed
+          let hookRow = null
           if (body.correlationId) {
-            await client.query(
-              `DELETE FROM workflow_hooks WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3`,
+            const hookResult = await client.query(
+              `UPDATE workflow_hooks SET status = 'disposed', disposed_at = NOW()
+               WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3
+               RETURNING *`,
               [rawRunId, body.correlationId, appId]
             )
+            if (hookResult.rows.length > 0) hookRow = hookResult.rows[0]
           }
           const eventRow = await insertEvent(client, rawRunId, appId, body)
-          result = { event: formatEvent(eventRow, resolveData) }
+          result = { event: formatEvent(eventRow, resolveData), hook: hookRow ? formatHook(hookRow) : undefined }
           break
         }
 

@@ -3,6 +3,7 @@ import { DuplicateIdempotencyKey, BadRequest } from '../lib/errors.ts'
 import { routeMessage } from '../queue/router.ts'
 import { dispatchMessage } from '../queue/dispatcher.ts'
 import { getRetryDelay } from '../queue/retry.ts'
+import { checkQueueRateLimit } from './quotas.ts'
 
 export default async function queuePlugin (app: FastifyInstance): Promise<void> {
   app.post('/api/v1/apps/:appId/queue', async (request, reply) => {
@@ -18,6 +19,8 @@ export default async function queuePlugin (app: FastifyInstance): Promise<void> 
     if (!body.queueName || !body.message) {
       throw new BadRequest('queueName and message are required')
     }
+
+    await checkQueueRateLimit(app, appId)
 
     // Extract runId from payload
     const runId = body.message.runId || body.message.workflowRunId || ''

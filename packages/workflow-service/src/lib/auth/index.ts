@@ -21,7 +21,7 @@ declare module 'fastify' {
 }
 
 // Paths that skip auth entirely
-const PUBLIC_PATHS = new Set(['/ready', '/status'])
+const PUBLIC_PATHS = new Set(['/ready', '/status', '/metrics'])
 
 // Paths that require master key (not app-level auth)
 function isMasterKeyPath (url: string): boolean {

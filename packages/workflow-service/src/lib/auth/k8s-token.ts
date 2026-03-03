@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { request as undiciRequest, Agent } from 'undici'
 import type pg from 'pg'
 
 interface K8sConfig {
@@ -16,12 +17,15 @@ const EXPIRY_BUFFER = 30_000 // 30 seconds before actual expiry
 export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
   const cache = new Map<string, CacheEntry>()
 
-  let caCert: string | undefined
+  let dispatcher: Agent | undefined
   if (config.caCert) {
     try {
-      caCert = readFileSync(config.caCert, 'utf-8')
+      const ca = readFileSync(config.caCert, 'utf-8')
+      dispatcher = new Agent({
+        connect: { ca },
+      })
     } catch {
-      // CA cert file not available, will skip TLS verification
+      // CA cert file not available, proceed without custom CA
     }
   }
 
@@ -39,18 +43,22 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
       spec: { token },
     })
 
-    const response = await fetch(
+    const response = await undiciRequest(
       `${config.apiServer}/apis/authentication.k8s.io/v1/tokenreviews`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: reviewBody,
+        dispatcher,
       }
     )
 
-    if (!response.ok) return null
+    if (response.statusCode >= 400) {
+      await response.body.dump()
+      return null
+    }
 
-    const review = await response.json() as {
+    const review = await response.body.json() as {
       status: {
         authenticated: boolean
         user?: { username: string }

@@ -37,7 +37,9 @@ export default async function hooksPlugin (app: FastifyInstance): Promise<void> 
     const appId = request.appId
     const limit = Math.min(parseInt(query.limit || '100', 10), 1000)
 
-    const conditions = ['application_id = $1']
+    const offset = query.cursor ? parseInt(query.cursor, 10) : 0
+
+    const conditions = ['application_id = $1', "status != 'disposed'"]
     const params: any[] = [appId]
     let paramIdx = 2
 
@@ -47,18 +49,20 @@ export default async function hooksPlugin (app: FastifyInstance): Promise<void> 
     }
 
     params.push(limit + 1)
+    params.push(offset)
 
     const result = await app.pg.query(
       `SELECT * FROM workflow_hooks
        WHERE ${conditions.join(' AND ')}
        ORDER BY created_at DESC
-       LIMIT $${paramIdx}`,
+       LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
       params
     )
 
     const hasMore = result.rows.length > limit
     const data = result.rows.slice(0, limit).map(formatHook)
+    const nextCursor = hasMore ? String(offset + limit) : null
 
-    return { data, cursor: null, hasMore }
+    return { data, cursor: nextCursor, hasMore }
   })
 }

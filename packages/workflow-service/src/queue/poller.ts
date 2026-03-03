@@ -38,7 +38,33 @@ export function createPoller (pool: pg.Pool) {
            RETURNING *`
         )
 
-        // 3. Dispatch all pending messages
+        // 3. Detect orphaned runs (running but no recent activity and no queued messages)
+        const orphans = await client.query(
+          `SELECT id, application_id, deployment_id FROM workflow_runs
+           WHERE status = 'running'
+             AND updated_at < NOW() - INTERVAL '15 minutes'
+             AND id NOT IN (
+               SELECT DISTINCT run_id FROM workflow_queue_messages
+               WHERE status IN ('pending', 'deferred', 'failed')
+             )
+           LIMIT 10`
+        )
+
+        for (const orphan of orphans.rows) {
+          // Fail orphaned runs
+          await client.query(
+            `UPDATE workflow_runs SET status = 'failed', error = $2, completed_at = NOW(), updated_at = NOW()
+             WHERE id = $1`,
+            [orphan.id, JSON.stringify({ message: 'Run orphaned: no activity for 15 minutes', code: 'ORPHANED' })]
+          )
+          await client.query(
+            `INSERT INTO workflow_events (run_id, application_id, event_type, event_data)
+             VALUES ($1, $2, 'run_failed', NULL)`,
+            [orphan.id, orphan.application_id]
+          )
+        }
+
+        // 4. Dispatch all pending messages
         const pending = await client.query(
           `SELECT * FROM workflow_queue_messages
            WHERE status = 'pending'

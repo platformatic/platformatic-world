@@ -15,6 +15,8 @@ import handlersPlugin from './plugins/handlers.ts'
 import queuePlugin from './plugins/queue.ts'
 import drainingPlugin from './plugins/draining.ts'
 import versionsPlugin from './plugins/versions.ts'
+import deadLettersPlugin from './plugins/dead-letters.ts'
+import metricsPlugin from './plugins/metrics.ts'
 import { createPoller } from './queue/poller.ts'
 
 export interface AppConfig {
@@ -46,6 +48,8 @@ export async function buildApp (config: AppConfig): Promise<FastifyInstance> {
   await app.register(queuePlugin)
   await app.register(drainingPlugin)
   await app.register(versionsPlugin)
+  await app.register(deadLettersPlugin)
+  await app.register(metricsPlugin)
 
   // Queue poller
   if (config.enablePoller !== false) {

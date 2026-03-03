@@ -58,11 +58,7 @@ export function createStorage (client: HttpClient) {
       create: async (runId: string | null, data: any, params?: any) => {
         const runIdPath = runId === null ? 'null' : runId
         const query = buildQuery(params)
-        const queryStr = new URLSearchParams(query as Record<string, string>).toString()
-        const path = `/runs/${runIdPath}/events${queryStr ? `?${queryStr}` : ''}`
-        // We need to pass resolveData as query param, but post doesn't support it directly
-        // So we add it to the URL
-        const result = await client.post(`/runs/${runIdPath}/events`, data)
+        const result = await client.post(`/runs/${runIdPath}/events`, data, query)
         if (result?.event) coerceDates(result.event)
         if (result?.run) coerceDates(result.run)
         if (result?.step) coerceDates(result.step)
