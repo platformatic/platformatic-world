@@ -83,30 +83,30 @@ graph TB
         myapp v1.2.3 - draining
         myapp v1.2.4 - active"]
         HR["HTTPRoute Manager
-        HTTP routing + webhook routing"]
+        HTTP + webhook routing"]
         DC["Draining Checker
-        queries WF Service for active runs"]
+        queries WF Service"]
     end
 
-    subgraph WFS["Workflow Service - independently scaled, cluster-internal only"]
+    subgraph WFS["Workflow Service"]
+        direction LR
         SA["Storage API
         events, runs, steps,
         hooks, waits, streams"]
         QR["Queue Router
         routes by deploymentId"]
-        PG[("PostgreSQL
-        WF Service DB")]
+        PG[("PostgreSQL")]
         SA --> PG
         QR --> PG
     end
 
     subgraph Pod1["Watt Pod v1.2.3"]
-        PW1["Plt World - no DB
+        PW1["Plt World
         all ops via WF Service"]
     end
 
     subgraph Pod2["Watt Pod v1.2.4"]
-        PW2["Plt World - no DB
+        PW2["Plt World
         all ops via WF Service"]
     end
 
