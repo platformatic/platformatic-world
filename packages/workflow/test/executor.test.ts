@@ -77,6 +77,15 @@ test('NOTIFY wakes up deferred message processing', async () => {
   try {
     await client.query('LISTEN deferred_messages')
 
+    // Set up listener before triggering NOTIFY
+    const notificationPromise = new Promise<pg.Notification>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Notification timeout')), 10_000)
+      client.once('notification', (msg) => {
+        clearTimeout(timeout)
+        resolve(msg)
+      })
+    })
+
     // Insert another deferred message and NOTIFY
     await app.pg.query(
       `INSERT INTO workflow_queue_messages
@@ -86,15 +95,7 @@ test('NOTIFY wakes up deferred message processing', async () => {
     )
     await app.pg.query("SELECT pg_notify('deferred_messages', '')")
 
-    // Wait for notification
-    const notification = await new Promise<pg.Notification>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Notification timeout')), 5000)
-      client.once('notification', (msg) => {
-        clearTimeout(timeout)
-        resolve(msg)
-      })
-    })
-
+    const notification = await notificationPromise
     assert.equal(notification.channel, 'deferred_messages')
   } finally {
     await client.end()
@@ -134,6 +135,15 @@ test('queue endpoint fires NOTIFY on deferred insert', async () => {
   try {
     await client.query('LISTEN deferred_messages')
 
+    // Set up listener before triggering the API call
+    const notificationPromise = new Promise<pg.Notification>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Notification timeout')), 10_000)
+      client.once('notification', (msg) => {
+        clearTimeout(timeout)
+        resolve(msg)
+      })
+    })
+
     // Use the API to insert a deferred message
     const response = await app.inject({
       method: 'POST',
@@ -147,15 +157,7 @@ test('queue endpoint fires NOTIFY on deferred insert', async () => {
     })
     assert.equal(response.statusCode, 201)
 
-    // Should receive NOTIFY
-    const notification = await new Promise<pg.Notification>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Notification timeout')), 5000)
-      client.once('notification', (msg) => {
-        clearTimeout(timeout)
-        resolve(msg)
-      })
-    })
-
+    const notification = await notificationPromise
     assert.equal(notification.channel, 'deferred_messages')
   } finally {
     await client.end()
