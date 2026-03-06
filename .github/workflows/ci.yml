@@ -5,6 +5,23 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Lint
+        run: pnpm lint
+
   test:
     runs-on: ubuntu-latest
 
@@ -16,7 +33,7 @@ jobs:
           POSTGRES_PASSWORD: wf
           POSTGRES_DB: workflow
         ports:
-          - 5433:5432
+          - 5434:5432
         options: >-
           --health-cmd "pg_isready -U wf -d workflow"
           --health-interval 2s
@@ -35,12 +52,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Run workflow-service tests
-        run: node --test --test-concurrency=1 packages/workflow-service/test/*.test.ts
+      - name: Run tests
+        run: pnpm test
 
       - name: Start workflow service
         run: |
-          node packages/workflow-service/src/server.ts &
+          node packages/workflow/src/server.ts &
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3042/status > /dev/null 2>&1; then
               echo "Service is ready"
@@ -51,5 +68,48 @@ jobs:
           echo "Service failed to start"
           exit 1
 
-      - name: Run world-client integration tests
-        run: node --test packages/world-client/test/client.test.ts
+      - name: Run world integration tests
+        run: node --test packages/world/test/client.test.ts
+
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: wf
+          POSTGRES_PASSWORD: wf
+          POSTGRES_DB: workflow
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U wf -d workflow"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build Next.js e2e app
+        run: pnpm -C e2e build
+        env:
+          WORKFLOW_TARGET_WORLD: '@platformatic/world'
+          PLT_WORLD_SERVICE_URL: http://localhost:3042
+          PLT_WORLD_APP_ID: default
+          PLT_WORLD_DEPLOYMENT_VERSION: e2e-test
+
+      - name: Run e2e tests
+        run: pnpm test:e2e
+        env:
+          DATABASE_URL: postgresql://wf:wf@localhost:5434/workflow
