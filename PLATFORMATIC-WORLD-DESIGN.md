@@ -83,7 +83,7 @@ graph TB
         myapp v1.2.3 - draining
         myapp v1.2.4 - active"]
         HR["HTTPRoute Manager
-        HTTP + webhook routing"]
+        HTTP routing"]
         DC["Draining Checker
         queries WF Service"]
     end
@@ -125,9 +125,9 @@ graph TB
 
 **Three-tier separation:**
 
-- **ICC (control plane):** Version registry, HTTPRoute management (including webhook path routing), autoscaling, draining decisions. Manages the Workflow Service's lifecycle (deploys, scales, monitors). Queries the Workflow Service API for draining checks. Does **not** handle any workflow CRUD.
-- **Workflow Service (data plane):** Handles all World operations — storage (events, runs, steps, hooks, waits, streams), queue routing, deferred delivery. Owns its PostgreSQL database. Scales horizontally — multiple pods can serve API requests. A **leader election** mechanism (using `@platformatic/leader` — a shared package extracted from ICC, based on `pg_try_advisory_lock` with LISTEN/NOTIFY) ensures that singleton tasks like the deferred message poller run on exactly one pod. If the leader fails, another replica acquires the lock automatically. **Cluster-internal only — never exposed to the internet.**
-- **Pods (executors):** Stateless. Talk exclusively to the Workflow Service for storage/queue operations. Handle webhook HTTP endpoints directly (routed by ICC's HTTPRoute rules).
+- **ICC (control plane):** Version registry, HTTPRoute management, autoscaling, draining decisions. Manages the Workflow Service's lifecycle (deploys, scales, monitors). Queries the Workflow Service API for draining checks. Does **not** handle any workflow CRUD.
+- **Workflow Service (data plane):** Handles all World operations — storage (events, runs, steps, hooks, waits, streams), queue routing, deferred delivery. Owns its PostgreSQL database. Scales horizontally — multiple pods can serve API requests. A **leader election** mechanism (using `@platformatic/leader` — a shared package extracted from ICC, based on `pg_try_advisory_lock` with LISTEN/NOTIFY) ensures that singleton tasks like the deferred message executor run on exactly one pod. If the leader fails, another replica acquires the lock automatically. **Cluster-internal only — never exposed to the internet.**
+- **Pods (executors):** Stateless. Talk exclusively to the Workflow Service for storage/queue operations. Handle webhook HTTP endpoints (the active version receives webhooks via standard routing, resolves them via the World Service, and the queue routes resume messages to the correct version).
 
 ---
 
@@ -138,49 +138,61 @@ graph TB
 - **Pods are stateless executors.** A pod receives a message from the Workflow Service, executes workflow/step code, and calls the service API to store results. If a pod dies mid-execution, the service retries the message on another pod of the same version.
 - **ICC manages the service's lifecycle.** ICC deploys the Workflow Service as cluster infrastructure (like the Gateway), scales it based on load, and monitors its health. ICC does not run workflow CRUD itself.
 - **ICC queries the service for draining.** For draining decisions, ICC calls the Workflow Service's draining API to get authoritative run counts per deployment version. No heartbeat estimation.
-- **Credentials stay centralized.** Pods need only the Workflow Service URL and an auth token. No Postgres credentials distributed to application pods.
+- **Two operating modes.** Single-tenant mode for local dev (no auth, no app creation, just `PLT_WORLD_SERVICE_URL`). Multi-tenant mode for K8s (K8s service account token auth, ICC manages apps). Same service, same API, different configuration.
+- **No API key provisioning.** Pods never need distributed secrets. In K8s, pods authenticate with their service account token (already present). Locally, no auth needed. No master key, no key rotation, no key distribution problem.
 - **Event-driven write path.** All state changes go through a single endpoint (`POST /api/v1/apps/:appId/runs/:runId/events`). This provides a complete audit trail and centralizes validation, side effects, and error handling.
 - **Binary storage for opaque data.** Step inputs, outputs, and event data are stored as `BYTEA` since the service never queries inside them. This supports encrypted payloads and avoids wasting CPU on JSON parsing.
-- **Webhook routing via URL path.** Webhook URLs include the `deploymentId` as a path segment, enabling ICC to route webhooks to the correct version's pods using standard HTTPRoute path rules. The Workflow Service is never exposed to external traffic.
+- **Webhook routing via queue.** Webhooks use standard HTTPRoute routing to the active version. The active version resolves the token, stores the payload, and the queue's deployment-aware routing delivers the resume to the correct version's pod. No per-version HTTPRoute rules needed.
 
 ---
 
 ## 6. Workflow Service API
 
-The Workflow Service exposes REST endpoints for the World interface. All app-scoped endpoints require Bearer token authentication. Admin endpoints (app management, version notification, draining) require the master key. The service is accessible only within the cluster.
+The Workflow Service exposes REST endpoints for the World interface. The service is accessible only within the cluster.
 
-### 6.1 Authentication
+### 6.1 Operating Modes
 
-The service supports two authentication modes, configured via `WF_AUTH_MODE`:
+The service runs in one of two modes:
 
-- **`api-key`** (default): Pods authenticate with per-app API keys (format: `wfk_<hex>`). Keys are hashed and stored in `workflow_app_keys`.
-- **`k8s-token`**: Pods authenticate with Kubernetes service account tokens. The service validates the token against the K8s API server and maps the namespace/service-account to an application via `workflow_app_k8s_bindings`.
-- **`both`**: Tries API key first, falls back to K8s token.
+- **Single-tenant mode**: No authentication. A single implicit application. No app creation step needed. The developer just points `PLT_WORLD_SERVICE_URL` at the service and it works. This is the mode for local development and standalone use.
 
-A separate **master key** (`WF_MASTER_KEY`) is used for admin operations: creating apps, rotating keys, draining, version notification.
+- **Multi-tenant mode**: Multiple applications share one Workflow Service. Pods authenticate with Kubernetes service account tokens. ICC manages application lifecycle (creation, draining, expiration). This is the mode for K8s deployments with ICC.
 
-Public paths (`/ready`, `/status`, `/metrics`) skip authentication entirely.
+The service detects its operating mode automatically: if a K8s service account token is present at `/var/run/secrets/kubernetes.io/serviceaccount/token`, it starts in multi-tenant mode. Otherwise, it starts in single-tenant mode. No configuration flag needed.
 
-### 6.2 App Management (Master Key Only)
+Public paths (`/ready`, `/status`, `/metrics`) skip authentication in both modes.
+
+### 6.2 Multi-tenant Authentication
+
+Every pod in K8s automatically receives a service account token mounted at `/var/run/secrets/kubernetes.io/serviceaccount/token`. Pods send this as a Bearer token in API requests.
+
+The Workflow Service authenticates requests by:
+
+1. Reading the Bearer token from the `Authorization` header
+2. Calling the K8s API server's `TokenReview` endpoint to validate the token
+3. Extracting the identity from the response — the `username` field has the format `system:serviceaccount:{namespace}:{serviceAccount}`
+4. Looking up `workflow_app_k8s_bindings` to map the namespace/serviceAccount pair to an application
+
+**Isolation:** The `workflow_app_k8s_bindings` table has a `UNIQUE (namespace, service_account)` constraint. Each namespace/serviceAccount pair maps to exactly one application. A pod cannot access another application's data because its K8s identity is fixed by the kubelet — it cannot be forged or changed at runtime. ICC is the sole authority that creates bindings (via `POST /api/v1/apps`).
+
+**Requirement:** Each application should use its own K8s service account. If two apps in the same namespace share a service account, they would map to the same application.
+
+### 6.3 App Management (Multi-tenant Only)
+
+In multi-tenant mode, ICC manages applications:
 
 ```
 POST   /api/v1/apps
-  Body: { appId }
-  → Creates application, returns first API key: { appId, apiKey: "wfk_..." }
+  Body: { appId, namespace, serviceAccount }
+  → Creates application with K8s identity binding
 
-POST   /api/v1/apps/:appId/keys/rotate
-  → Revokes all existing keys, issues new key: { appId, apiKey: "wfk_..." }
-
-POST   /api/v1/apps/:appId/k8s-binding
-  Body: { namespace, serviceAccount }
-  → Binds a K8s service account to this application
-
-DELETE /api/v1/apps/:appId/k8s-binding
-  Body: { namespace, serviceAccount }
-  → Removes K8s binding
+DELETE /api/v1/apps/:appId
+  → Removes application
 ```
 
-### 6.3 Events (Main Write Path)
+In single-tenant mode, these endpoints are not needed — the implicit application is used for all operations.
+
+### 6.4 Events (Main Write Path)
 
 All state changes flow through the events endpoint. This is the core write path for the entire system.
 
@@ -232,7 +244,7 @@ GET    /api/v1/apps/:appId/events/by-correlation
   → Returns events matching a correlation ID
 ```
 
-### 6.4 Runs (Read-Only)
+### 6.5 Runs (Read-Only)
 
 ```
 GET    /api/v1/apps/:appId/runs/:runId
@@ -246,7 +258,7 @@ GET    /api/v1/apps/:appId/runs
 
 Runs are created and updated exclusively through events (`run_created`, `run_started`, `run_completed`, `run_failed`, `run_cancelled`, `run_expired`). There are no direct write endpoints for runs.
 
-### 6.5 Steps (Read-Only)
+### 6.6 Steps (Read-Only)
 
 ```
 GET    /api/v1/apps/:appId/runs/:runId/steps/:stepId
@@ -260,7 +272,7 @@ GET    /api/v1/apps/:appId/runs/:runId/steps
 
 Steps are created and updated exclusively through events (`step_created`, `step_started`, `step_completed`, `step_failed`, `step_retrying`).
 
-### 6.6 Hooks (Read-Only)
+### 6.7 Hooks (Read-Only)
 
 ```
 GET    /api/v1/apps/:appId/hooks/:hookId
@@ -276,7 +288,7 @@ GET    /api/v1/apps/:appId/hooks
 
 Hooks are created and updated exclusively through events (`hook_created`, `hook_received`, `hook_disposed`). The `workflow_hooks` table tracks the full lifecycle: `pending` → `received` → `disposed`.
 
-### 6.7 Streams
+### 6.8 Streams
 
 ```
 PUT    /api/v1/apps/:appId/runs/:runId/streams/:name
@@ -293,7 +305,7 @@ GET    /api/v1/apps/:appId/runs/:runId/streams
   → Lists stream names for a run
 ```
 
-### 6.8 Queue
+### 6.9 Queue
 
 ```
 POST   /api/v1/apps/:appId/queue
@@ -315,7 +327,7 @@ POST   /api/v1/apps/:appId/queue
 - `409` — Duplicate message (idempotency key already processed)
 - `429` — Queue rate limit exceeded
 
-### 6.9 Encryption
+### 6.10 Encryption
 
 ```
 GET    /api/v1/apps/:appId/encryption-key?runId=...
@@ -324,7 +336,7 @@ GET    /api/v1/apps/:appId/encryption-key?runId=...
 
 Per-app secrets are auto-generated (32 random bytes) and stored in `workflow_encryption_keys`. Per-run keys are derived via HKDF-SHA256 with the runId as salt and `"workflow-encryption"` as info. Pods receive only the derived key, never the master secret.
 
-### 6.10 Handler Registration
+### 6.11 Handler Registration
 
 ```
 POST   /api/v1/apps/:appId/handlers
@@ -337,7 +349,7 @@ DELETE /api/v1/apps/:appId/handlers/:podId
 
 When pods start, they register their queue handler endpoints with the Workflow Service. The service uses these for dispatching queue messages. Re-registration updates the existing record and refreshes the heartbeat timestamp.
 
-### 6.11 Version Notification (Called by ICC)
+### 6.12 Version Notification (Called by ICC)
 
 ```
 POST   /api/v1/versions/notify
@@ -347,7 +359,7 @@ POST   /api/v1/versions/notify
 
 When ICC detects a new deployment version (via Machinist/watt-extra), it notifies the Workflow Service so the service knows which versions are active, draining, or expired. This allows the service to reject queue submissions for expired versions immediately rather than attempting delivery.
 
-### 6.12 Draining API (Called by ICC)
+### 6.13 Draining API (Called by ICC)
 
 ```
 GET    /api/v1/apps/:appId/versions/:deploymentId/status
@@ -366,9 +378,9 @@ The expire operation within a single transaction:
 5. Deregisters all handlers for the version
 6. Updates version status to `expired`
 
-These endpoints require the master key and are called by ICC's draining checker, not by pods.
+In multi-tenant mode, these endpoints are called by ICC's draining checker using K8s service-to-service authentication. In single-tenant mode, they are accessible without auth (useful for local debugging).
 
-### 6.13 Dead-Letter Management
+### 6.14 Dead-Letter Management
 
 ```
 GET    /api/v1/apps/:appId/dead-letters
@@ -379,7 +391,7 @@ POST   /api/v1/apps/:appId/dead-letters/:messageId/retry
   → Resets a dead-lettered message to pending for redelivery
 ```
 
-### 6.14 Metrics
+### 6.15 Metrics
 
 ```
 GET    /metrics
@@ -391,14 +403,14 @@ Exposed metrics:
 - **Gauges:** `wf_active_runs`, `wf_queue_depth`, `wf_db_pool_total`, `wf_db_pool_idle`
 - **Summaries:** `wf_request_duration_ms` (p50, p95, p99), `wf_queue_dispatch_duration_ms`
 
-### 6.15 Health
+### 6.16 Health
 
 ```
 GET    /ready   → 200 if service is ready
 GET    /status  → 200 with service status
 ```
 
-### 6.16 Quotas
+### 6.17 Quotas
 
 Per-app quotas are enforced on write operations:
 - **`max_runs`** (default 10,000): Maximum concurrent active runs. Checked on `run_created` events.
@@ -509,11 +521,13 @@ require(targetWorld).createWorld()
 
 The `@platformatic/world` package (in `packages/world/`) exports `createWorld()` which reads config from environment variables and delegates to `createPlatformaticWorld()`:
 
-- `PLT_WORLD_SERVICE_URL` — Workflow Service URL (static: `http://workflow.platformatic`)
-- `PLT_WORLD_APP_ID` — Application ID (derived from `app.kubernetes.io/name` pod label)
-- `PLT_WORLD_DEPLOYMENT_VERSION` — Deployment version for queue routing (derived from `plt.dev/version` pod label)
+- `PLT_WORLD_SERVICE_URL` — Workflow Service URL (**required**)
+- `PLT_WORLD_APP_ID` — Application ID (optional, defaults from `package.json` name)
+- `PLT_WORLD_DEPLOYMENT_VERSION` — Deployment version for queue routing (optional, defaults to `local`)
 
-These env vars are wired automatically by the Helm Deployment template using the Kubernetes Downward API — they are derived from pod labels the user already sets for skew protection. No manual env var configuration is needed, and there is a single source of truth (the labels). The env vars are available at pod startup without contacting ICC — this is important because watt-extra can start the runtime before ICC is reachable. Auth uses K8s service account tokens (`WF_AUTH_MODE=k8s-token`), so no API key provisioning is needed.
+**Standalone / local dev:** Only `PLT_WORLD_SERVICE_URL` is required. The Workflow Service runs in single-tenant mode (no auth). The developer starts the service, sets the URL, and runs their app.
+
+**K8s with ICC:** All env vars are wired automatically by the Helm Deployment template using the Kubernetes Downward API — `PLT_WORLD_APP_ID` from `app.kubernetes.io/name` label, `PLT_WORLD_DEPLOYMENT_VERSION` from `plt.dev/version` label. No manual env var configuration is needed, and there is a single source of truth (the labels). The env vars are available at pod startup without contacting ICC — this is important because watt-extra can start the runtime before ICC is reachable. Auth uses K8s service account tokens.
 
 Watt-extra's world plugin checks if `PLT_WORLD_SERVICE_URL` is set, and if so, sets `WORKFLOW_TARGET_WORLD=@platformatic/world` so the DevKit discovers our world. No changes to the watt runtime or the Vercel DevKit are needed.
 
@@ -564,16 +578,21 @@ The workflow runtime uses `delaySeconds` in three situations:
 
 The Workflow Service handles deferred messages with a `deliver_at` timestamp:
 
-1. **On receive:** If `delaySeconds > 0`, the service inserts the message into `workflow_queue_messages` with `deliver_at = NOW() + delaySeconds` and `status = 'deferred'`. Returns immediately with `{ messageId, scheduled: true }`.
-2. **Periodic poller:** A poller (`queue/poller.ts`) runs only on the elected leader pod (using `createLeaderElector` from `@platformatic/leader`) every 5 seconds:
-   - Promotes deferred messages where `deliver_at <= NOW()` to `pending`
+1. **On receive:** If `delaySeconds > 0`, the service inserts the message into `workflow_queue_messages` with `deliver_at = NOW() + delaySeconds` and `status = 'deferred'`. Returns immediately with `{ messageId, scheduled: true }`. Then fires `NOTIFY "deferred_messages"` to wake the leader.
+2. **Leader executor:** The leader pod (elected via `@platformatic/leader`) listens on the `deferred_messages` Postgres notification channel. When notified (or on startup), it:
+   - Queries the earliest `deliver_at` across all deferred messages
+   - Sets a timer for that exact time
+   - When the timer fires, promotes ready messages (`deliver_at <= NOW()`) to `pending`
    - Retries failed messages where `next_retry_at <= NOW()`
    - Detects orphaned runs (stuck in `running` without recent activity)
    - Dispatches pending messages through the normal routing logic
+   - Recalculates the next timer from the remaining deferred messages
 
-**Precision:** The poller interval (5s) determines the maximum delay overshoot. A message with `delaySeconds: 60` will be delivered between 60–65 seconds later.
+   This is the same pattern used by ICC's cron service (`services/cron/plugins/pg-hooks.js`).
 
-**Reliability:** Deferred messages are persisted in Postgres. If the service restarts, the poller picks them up on the next tick. Messages are never lost.
+**Precision:** Delivery is precise to the scheduled time — no polling interval, no overshoot. A `sleep(60)` resumes at exactly 60 seconds.
+
+**Reliability:** Deferred messages are persisted in Postgres. If the leader restarts, the new leader queries all pending deferred messages and sets timers on election. Messages are never lost. If a notification is missed during leader failover, the new leader catches up immediately.
 
 ### 8.4 Message Lifecycle
 
@@ -597,7 +616,7 @@ graph LR
     style Dead fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
 ```
 
-- **Deferred → Pending:** The periodic poller promotes deferred messages when `deliver_at <= NOW()`.
+- **Deferred → Pending:** The leader executor promotes deferred messages when `deliver_at <= NOW()` (triggered by timer, not polling).
 - **Pending → Dispatched:** The service routes the message to the correct pod and POSTs it.
 - **Dispatched → Delivered:** The pod processes the message and returns 200.
 - **Dispatched → Retrying:** The pod returns an error or is unreachable. The service retries with exponential backoff (1s, 2s, 4s, 8s, up to 60s). Default max retries: 10.
@@ -613,7 +632,7 @@ Queue messages for the same run are not guaranteed to be processed in order — 
 
 ### 8.7 Deferred Message Guarantees
 
-Deferred messages are persisted in Postgres and survive restarts. The leader election mechanism (`@platformatic/leader`, shared with ICC) ensures only one pod runs the poller. If the leader fails, another replica acquires the advisory lock and takes over polling automatically.
+Deferred messages are persisted in Postgres and survive restarts. The leader election mechanism (`@platformatic/leader`, shared with ICC) ensures only one pod runs the executor. If the leader fails, another replica acquires the advisory lock, queries all pending deferred messages, and sets timers automatically.
 
 ### 8.8 Dispatch
 
@@ -638,17 +657,7 @@ CREATE TABLE workflow_applications (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE workflow_app_keys (
-  id              SERIAL PRIMARY KEY,
-  application_id  INTEGER NOT NULL REFERENCES workflow_applications(id),
-  key_hash        VARCHAR NOT NULL UNIQUE,
-  key_prefix      VARCHAR NOT NULL,
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  revoked_at      TIMESTAMPTZ
-);
-
-CREATE INDEX idx_wak_hash ON workflow_app_keys (key_hash) WHERE revoked_at IS NULL;
-
+-- Multi-tenant mode only: maps K8s identities to applications
 CREATE TABLE workflow_app_k8s_bindings (
   id              SERIAL PRIMARY KEY,
   application_id  INTEGER NOT NULL REFERENCES workflow_applications(id),
@@ -860,31 +869,15 @@ CREATE TABLE workflow_app_quotas (
 
 ### 10.1 The Problem
 
-External webhooks arrive as HTTP requests. The external caller does not know about deployment versions. ICC's Gateway routes HTTP traffic using HTTPRoute rules, but cannot execute custom logic to resolve a token to a deployment version.
+External webhooks arrive as HTTP requests at `/.well-known/workflow/v1/webhook/{token}`. The external caller does not know about deployment versions. The webhook may belong to a run started on a previous version (e.g. V1) while the active version is now V2.
 
-### 10.2 Solution: Deployment Version in the URL Path
+### 10.2 Solution: Route via Active Version + Queue
 
-When a workflow creates a hook, the Platformatic World generates a webhook URL that includes the `deploymentId` as a path segment:
+Webhooks use the standard HTTPRoute — no per-version webhook path rules, no HTTPRoute changes. The Gateway routes the webhook to the **active version** like any other request. The active version resolves the token, records the payload, and the queue handles version-pinned routing.
 
 ```
-/.well-known/workflow/v1/webhook/{deploymentId}/{token}
+/.well-known/workflow/v1/webhook/{token}
 ```
-
-ICC creates HTTPRoute rules per deployment version for webhook paths:
-
-```yaml
-# Standard skew protection — already exists
-- path: /*
-  headers:
-    cookie: __plt_dpl=v1
-  backend: v1-service
-
-# Webhook routing — new
-- path: /.well-known/workflow/v1/webhook/v1/*
-  backend: v1-service
-```
-
-This is pure HTTPRoute configuration — path-based routing is standard and requires no custom Gateway middleware.
 
 ### 10.3 Webhook Flow
 
@@ -892,53 +885,35 @@ This is pure HTTPRoute configuration — path-based routing is standard and requ
 sequenceDiagram
     participant Ext as External System
     participant GW as Gateway
-    participant Pod as Pod v1
+    participant V2 as Pod V2 - active
     participant WFS as Workflow Service
+    participant V1 as Pod V1 - draining
 
-    Ext->>GW: POST /.well-known/workflow/v1/webhook/v1/abc
-    Note over GW: HTTPRoute matches /v1/* prefix
-    GW->>Pod: Route to v1 backend
-    Note over Pod: Pod receives webhook directly
-    Pod->>WFS: hooks.getByToken - resolve token
-    Pod->>WFS: events.create - hook_received event
-    Pod->>WFS: queue resume message
-    Pod-->>GW: 200 OK
+    Ext->>GW: POST /.well-known/workflow/v1/webhook/abc123 with payload
+    GW->>V2: Standard HTTPRoute - routes to active version
+    V2->>WFS: hooks.getByToken - resolve token to run
+    Note over WFS: Token maps to run on V1
+    V2->>WFS: events.create - hook_received with payload
+    V2->>WFS: queue resume message for the run
+    V2-->>GW: 200 OK
     GW-->>Ext: 200 OK
+    Note over WFS: Queue routes resume to V1 via deploymentVersion
+    WFS->>V1: Dispatch workflow resume to correct version
 ```
 
-The pod receives the webhook directly via standard HTTPRoute path routing. It then uses the world client to:
-1. Look up the hook by token (`hooks.getByToken`)
-2. Record the webhook payload (`events.create` with `hook_received`)
-3. Queue a workflow resume message (already on the correct version's pod)
+1. External system POSTs to `/.well-known/workflow/v1/webhook/{token}` **with a payload body** (e.g. Stripe payment confirmation, GitHub event)
+2. Gateway routes to the active version (V2) — standard routing, no special rules
+3. V2 resolves the token via World Service (`hooks.getByToken`), discovers it belongs to a run on V1
+4. V2 creates `hook_received` event **with the webhook payload** via World Service
+5. V2 queues a workflow resume message via World Service
+6. World Service routes the resume to V1 via deployment-aware queue routing (the run's `deploymentVersion` is V1)
+7. V1 replays the workflow, hook resolves with the stored payload from the event log
 
-**Key benefit:** The Workflow Service is never exposed to external traffic. It remains cluster-internal. All webhook resolution happens on the pod using the existing world client interface.
-
-### 10.4 ICC HTTPRoute Configuration
-
-When ICC detects a new deployment version, it creates webhook routing rules alongside the existing HTTP skew protection rules:
-
-```yaml
-- path: /.well-known/workflow/v1/webhook/{versionLabel}/*
-  backend: {versionLabel}-service
-```
-
-When a version is expired, both the skew protection and webhook HTTPRoute rules are removed together during `expireAndCleanup`.
-
-### 10.5 Hook Token Format
-
-The hook token includes the deployment version as a prefix:
-
-```
-{deploymentId}/{randomToken}
-```
-
-When the world creates a hook (via `hook_created` event), the token is generated with the deployment version embedded. The webhook URL exposed to external callers is:
-
-```
-https://{appHost}/.well-known/workflow/v1/webhook/{deploymentId}/{randomToken}
-```
-
-The `{deploymentId}` segment serves double duty: it's both part of the token (stored in the hooks table) and the path segment that ICC uses for HTTPRoute matching.
+**Key properties:**
+- **No HTTPRoute changes.** Webhooks use standard routing. No per-version path rules, no ICC webhook routing logic, no routes to clean up during expiration.
+- **Payload is preserved.** The webhook body is stored in the `hook_received` event. The receiving version (V2) doesn't need to understand the payload — it just forwards it to the World Service.
+- **Version routing via queue.** The queue's existing deployment-aware routing handles dispatching to the correct version. One routing mechanism for everything.
+- **Extra hop trade-off.** The webhook lands on V2 but the resume executes on V1. This adds one hop compared to direct routing, but eliminates all HTTPRoute complexity.
 
 ---
 
@@ -991,7 +966,7 @@ The Workflow Service (in a single transaction):
 6. Updates version status to `expired`.
 
 ICC then:
-7. Removes the version's HTTPRoute rules (including webhook path rules).
+7. Removes the version's HTTPRoute rules.
 8. Disables autoscaler for the expired Deployment.
 9. Scales the Deployment to 0 replicas.
 
@@ -1015,13 +990,12 @@ The complete lifecycle of a deployment version, combining HTTP and workflow skew
 graph LR
     Active["Active
     New HTTP sessions
-    New workflow runs
-    Webhooks OK"] -->|"newer version detected"| Draining
+    New workflow runs"] -->|"newer version detected"| Draining
 
     Draining["Draining
     Pinned HTTP sessions
     In-flight runs
-    Webhooks OK"] -->|"all runs completed"| Expired
+    Webhooks via active version"] -->|"all runs completed"| Expired
 
     Draining -->|"grace period exceeded"| Expiring
 
@@ -1032,7 +1006,6 @@ graph LR
     Expired["Expired
     Scaled to 0
     No routing
-    No webhooks
     Runs cancelled"]
 
     style Active fill:#d1fae5,stroke:#16a34a,stroke-width:2px,color:#14532d
@@ -1043,9 +1016,9 @@ graph LR
 
 **Transition triggers:**
 
-- **Active → Draining:** A newer version is detected by ICC. Webhook HTTPRoute rules remain active for the draining version.
+- **Active → Draining:** A newer version is detected by ICC. Webhooks continue to work — they route to the new active version, which forwards resume messages to the draining version via the queue.
 - **Draining → Expiring:** Zero HTTP RPS in the configured window (`skewPolicy.rpsWindow`) AND zero in-flight workflow runs AND zero pending hooks/waits AND zero queued messages, OR grace period exceeded.
-- **Expiring → Expired:** In-flight runs cancelled (via Workflow Service expire API), HTTPRoute rules removed (including webhook paths), Deployment scaled to 0.
+- **Expiring → Expired:** In-flight runs cancelled (via Workflow Service expire API), HTTPRoute rules removed, Deployment scaled to 0.
 
 ---
 
@@ -1059,8 +1032,8 @@ graph LR
 - **Simple pod model.** Pods have a single dependency: the Workflow Service URL. No Postgres connection strings, no ICC URL for workflow operations, no database drivers.
 - **Centralized observability.** The Workflow Service has complete visibility into all workflow state — active runs per app per version, event log inspection, queue depth, delivery latency, retry rates, cross-application metrics. Prometheus-compatible `/metrics` endpoint for integration with existing monitoring.
 - **Centralized schema management.** The Workflow Service runs its own migrations. Applications don't need to manage workflow schema versions.
-- **Multi-tenancy.** The service enforces per-application quotas (max runs, max events per run, queue rate limits) and access control (API key or K8s token auth) at the API layer.
-- **Webhook routing without exposing the service.** Webhooks route directly to the correct version's pod via standard HTTPRoute path rules. The Workflow Service remains cluster-internal — no public ingress, no additional attack surface.
+- **Multi-tenancy.** In multi-tenant mode, the service enforces per-application quotas (max runs, max events per run, queue rate limits) and access control (K8s service account token auth) at the API layer.
+- **Simple webhook routing.** Webhooks route to the active version via standard HTTPRoute. The active version resolves the token, stores the payload, and the queue routes the resume to the correct version. No per-version HTTPRoute rules, no additional attack surface.
 - **Event-driven audit trail.** All state changes are immutable events in `workflow_events`. Full replay history for debugging and observability.
 
 ### Disadvantages
@@ -1072,7 +1045,47 @@ graph LR
 
 ---
 
-## 14. Comparison with Existing Worlds
+## 14. Local Development
+
+The Platformatic World can run standalone without K8s or ICC. This enables local development with the same workflow infrastructure used in production.
+
+### 14.1 Setup
+
+1. **Start PostgreSQL** — any local instance (Docker, Homebrew, etc.)
+2. **Create a database** — `createdb workflow`
+3. **Start the Workflow Service** — it runs migrations automatically on startup
+   ```bash
+   DATABASE_URL=postgres://localhost:5432/workflow node packages/workflow-service/dist/index.js
+   ```
+   The service detects no K8s service account token → starts in single-tenant mode (no auth, single implicit app).
+4. **Configure the app** — add to `.env`:
+   ```
+   PLT_WORLD_SERVICE_URL=http://localhost:3042
+   WORKFLOW_TARGET_WORLD=@platformatic/world
+   ```
+5. **Run the app** — `next dev`, `node server.js`, etc. Workflows execute against the local Workflow Service.
+
+### 14.2 What Works
+
+- All workflow operations: runs, steps, events, hooks, waits, streams, encryption
+- Queue dispatch: the service delivers messages back to the app's registered handler endpoints on localhost
+- Deferred messages: the leader executor promotes them precisely on schedule via LISTEN/NOTIFY
+- Webhooks: external services can POST to `http://localhost:3000/.well-known/workflow/v1/webhook/{token}`
+
+### 14.3 What Doesn't Apply
+
+- **Skew protection / deployment-aware routing** — only one version runs locally. `PLT_WORLD_DEPLOYMENT_VERSION` defaults to `local`.
+- **Draining / force-expiration** — no ICC, no version lifecycle.
+- **Multi-tenancy** — single implicit app, no auth.
+- **K8s service account tokens** — not in K8s, so single-tenant mode.
+
+### 14.4 Desk Environment
+
+For testing workflows with skew protection in a local K8s cluster, use the Desk `skew-protection` profile. This spins up the full stack (ICC, Workflow Service, Gateway) with hot-reload support. See task list section 8 for details.
+
+---
+
+## 15. Comparison with Existing Worlds
 
 | Aspect | Local | Postgres | Vercel | **Platformatic** |
 |---|---|---|---|---|
@@ -1080,13 +1093,13 @@ graph LR
 | Queue | In-process | graphile-worker | Vercel Queue | **Workflow Service queue router** |
 | Deferred messages | In-process timer | graphile-worker delay | Vercel Queue delay | **Workflow Service deferred delivery** |
 | Deployment routing | N/A | None | Vercel infra | **Workflow Service (deploymentId routing)** |
-| Webhook routing | N/A | None | Vercel infra | **HTTPRoute path rules (deploymentId in URL)** |
+| Webhook routing | N/A | None | Vercel infra | **Standard routing to active version + queue-based resume** |
 | Encryption | None | None | Per-deployment keys | **Per-app HKDF-derived keys** |
 | Durability | None | Full | Full | **Full** |
 | Multi-version safety | By isolation | Unsafe | Safe | **Safe** |
 | Draining | N/A | N/A | Vercel manages | **ICC queries Workflow Service** |
 | Safe decommissioning | N/A | N/A | Vercel manages | **Authoritative — all run states visible** |
-| Auth | N/A | Database user | Vercel tokens | **API key / K8s service account** |
+| Auth | N/A | Database user | Vercel tokens | **K8s service account token (multi-tenant) / none (single-tenant)** |
 | Quotas | N/A | N/A | Vercel limits | **Per-app configurable** |
 | Infrastructure | None | PostgreSQL | Vercel | **K8s + ICC + Workflow Service + PostgreSQL** |
 
