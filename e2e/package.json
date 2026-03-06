@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev --turbopack -p 3456",
     "build": "next build",
-    "test": "node --test test/*.test.ts"
+    "test": "node --test --test-force-exit test/*.test.ts"
   },
   "dependencies": {
     "@platformatic/world": "workspace:*",
@@ -17,7 +17,9 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "@types/pg": "^8.18.0",
     "@types/react": "^19.0.0",
+    "pg": "^8.20.0",
     "typescript": "^5.9.3"
   }
 }
