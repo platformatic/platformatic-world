@@ -65,6 +65,9 @@ function coerceDates (obj: any): any {
 function restoreEntity (obj: any): any {
   if (!obj) return obj
   coerceDates(obj)
+  if (obj.eventData && typeof obj.eventData === 'object') {
+    coerceDates(obj.eventData)
+  }
   restoreUint8Arrays(obj)
   return obj
 }

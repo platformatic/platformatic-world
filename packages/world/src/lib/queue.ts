@@ -7,15 +7,23 @@ export interface QueueConfig {
 
 export function createQueue (client: HttpClient, config: QueueConfig) {
   const queue = async (queueName: ValidQueueName, message: QueuePayload, opts?: QueueOptions): Promise<{ messageId: MessageId | null }> => {
-    const result = await client.post('/queue', {
-      queueName,
-      message,
-      deploymentId: opts?.deploymentId ?? config.deploymentVersion,
-      idempotencyKey: opts?.idempotencyKey,
-      delaySeconds: opts?.delaySeconds,
-    })
+    try {
+      const result = await client.post('/queue', {
+        queueName,
+        message,
+        deploymentId: opts?.deploymentId ?? config.deploymentVersion,
+        idempotencyKey: opts?.idempotencyKey,
+        delaySeconds: opts?.delaySeconds,
+      })
 
-    return { messageId: (result?.messageId ?? null) as MessageId | null }
+      return { messageId: (result?.messageId ?? null) as MessageId | null }
+    } catch (err: any) {
+      // 409 = duplicate idempotency key, treat as success (message already processed)
+      if (err.statusCode === 409) {
+        return { messageId: null }
+      }
+      throw err
+    }
   }
 
   const createQueueHandler = (_prefix: string, handler: (message: unknown, meta: { attempt: number; queueName: ValidQueueName; messageId: MessageId }) => Promise<void | { timeoutSeconds: number }>) => {

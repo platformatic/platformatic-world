@@ -75,6 +75,28 @@ async function waitForRunStatus (runId: string, status: string, timeoutMs = 30_0
   throw new Error(`Timed out waiting for run ${runId} to reach status ${status}`)
 }
 
+async function triggerE2eWorkflow (workflow: string, args: any[] = []): Promise<string> {
+  const res = await fetch(`${NEXT_URL}/api/trigger-e2e`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow, args }),
+  })
+  assert.equal(res.status, 200, `trigger ${workflow} failed: ${res.status}`)
+  const { runId } = await res.json() as { runId: string }
+  assert.ok(runId, `${workflow} should return a runId`)
+  return runId
+}
+
+async function runE2eWorkflow (workflow: string, args: any[] = []): Promise<{ runId: string, result: any }> {
+  const res = await fetch(`${NEXT_URL}/api/trigger-e2e`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workflow, args, waitForResult: true }),
+  })
+  assert.equal(res.status, 200, `trigger ${workflow} failed: ${res.status}`)
+  return await res.json() as { runId: string, result: any }
+}
+
 async function registerHandlers (): Promise<void> {
   const res = await fetch(`${WF_URL}/api/v1/apps/default/handlers`, {
     method: 'POST',
@@ -98,6 +120,13 @@ let wfService: SpawnedProcess
 let nextApp: SpawnedProcess
 
 before(async () => {
+  // 0. Clean up the database from any previous test runs
+  const { default: pg } = await import('pg')
+  const client = new pg.Client(DB_URL)
+  await client.connect()
+  await client.query('TRUNCATE workflow_events, workflow_hooks, workflow_queue_messages, workflow_steps, workflow_waits, workflow_stream_chunks, workflow_runs, workflow_queue_handlers CASCADE')
+  await client.end()
+
   // 1. Start the workflow service in single-tenant mode
   wfService = startProcess('node', ['src/server.ts'], {
     DATABASE_URL: DB_URL,
@@ -152,4 +181,70 @@ test('workflow service has the run with events', { timeout: 10_000 }, async () =
   assert.equal(eventsRes.status, 200)
   const { data: events } = await eventsRes.json() as { data: any[] }
   assert.ok(events.length >= 2, 'should have at least run_created and run_completed events')
+})
+
+// ---- Vercel e2e compatibility tests ----
+
+test('addTen: multi-step chaining', { timeout: 30_000 }, async () => {
+  const { result } = await runE2eWorkflow('addTenWorkflow', [5])
+  assert.equal(result, 15)
+})
+
+test('promiseAll: parallel steps', { timeout: 30_000 }, async () => {
+  const { result } = await runE2eWorkflow('promiseAllWorkflow')
+  assert.equal(result, 'ABC')
+})
+
+test('promiseRace: first step wins', { timeout: 60_000 }, async () => {
+  const { result } = await runE2eWorkflow('promiseRaceWorkflow')
+  assert.equal(result, 'B')
+})
+
+test('sleeping: deferred delivery', { timeout: 60_000 }, async () => {
+  const startTime = Date.now()
+  const runId = await triggerE2eWorkflow('sleepingWorkflow')
+  const run = await waitForRunStatus(runId, 'completed', 45_000)
+  const elapsed = Date.now() - startTime
+  assert.equal(run.status, 'completed')
+  assert.ok(elapsed >= 9_000, `sleep should be at least 9s, got ${elapsed}ms`)
+})
+
+test('parallelSleep: concurrent sleeps', { timeout: 30_000 }, async () => {
+  const startTime = Date.now()
+  const runId = await triggerE2eWorkflow('parallelSleepWorkflow')
+  const run = await waitForRunStatus(runId, 'completed', 20_000)
+  const elapsed = Date.now() - startTime
+  assert.equal(run.status, 'completed')
+  // 10 parallel 1s sleeps should complete in ~2-3s, not 10s
+  assert.ok(elapsed < 8_000, `parallel sleeps should overlap, took ${elapsed}ms`)
+})
+
+test('nullByte: data integrity', { timeout: 30_000 }, async () => {
+  const { result } = await runE2eWorkflow('nullByteWorkflow')
+  assert.equal(result, 'null byte \0')
+})
+
+test('fetch: network inside step', { timeout: 30_000 }, async () => {
+  const { result } = await runE2eWorkflow('fetchWorkflow')
+  assert.equal(result.userId, 1)
+  assert.equal(result.id, 1)
+  assert.ok(result.title)
+})
+
+test('errorRetry: step retries until success', { timeout: 60_000 }, async () => {
+  const { result } = await runE2eWorkflow('errorRetrySuccessWorkflow')
+  assert.equal(result.finalAttempt, 3)
+})
+
+test('errorFatal: no retries on FatalError', { timeout: 30_000 }, async () => {
+  const { result } = await runE2eWorkflow('errorFatalWorkflow')
+  assert.equal(result.caught, true)
+  assert.equal(result.message, 'Fatal step error')
+})
+
+test('spawnWorkflowFromStep: child workflow', { timeout: 60_000 }, async () => {
+  const { result } = await runE2eWorkflow('spawnWorkflowFromStepWorkflow', [7])
+  assert.equal(result.parentInput, 7)
+  assert.equal(result.childResult.childResult, 14)
+  assert.ok(result.childRunId)
 })
