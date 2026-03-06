@@ -600,10 +600,11 @@ The Workflow Service handles deferred messages with a `deliver_at` timestamp:
 graph LR
     Received["Received"] -->|"delaySeconds > 0"| Deferred["Deferred"]
     Received -->|"delaySeconds == 0"| Pending["Pending"]
-    Deferred -->|"deliver_at reached"| Dispatched["Dispatched"]
-    Pending -->|"pod returns error"| Retrying["Retrying
-    exp backoff"]
+    Deferred -->|"deliver_at reached"| Pending
+    Pending -->|"routed to pod"| Dispatched["Dispatched"]
     Dispatched -->|"pod returns 200"| Delivered["Delivered"]
+    Dispatched -->|"pod returns error"| Retrying["Retrying
+    exp backoff"]
     Retrying -->|"retry succeeds"| Delivered
     Retrying -->|"max retries exhausted"| Dead["Dead"]
 
@@ -616,7 +617,7 @@ graph LR
     style Dead fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
 ```
 
-- **Deferred → Pending:** The leader executor promotes deferred messages when `deliver_at <= NOW()` (triggered by timer, not polling).
+- **Deferred → Pending:** The leader executor promotes deferred messages when `deliver_at <= NOW()` (triggered by timer, not polling). Immediate messages (`delaySeconds == 0`) go directly to Pending.
 - **Pending → Dispatched:** The service routes the message to the correct pod and POSTs it.
 - **Dispatched → Delivered:** The pod processes the message and returns 200.
 - **Dispatched → Retrying:** The pod returns an error or is unreachable. The service retries with exponential backoff (1s, 2s, 4s, 8s, up to 60s). Default max retries: 10.
