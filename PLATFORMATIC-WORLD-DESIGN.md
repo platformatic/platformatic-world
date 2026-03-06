@@ -423,7 +423,7 @@ Quota violations return `429 Too Many Requests`. Quotas are cached in-memory wit
 
 ## 7. World Client Implementation
 
-The `world-client` package (`@platformatic/world-client`) provides `createPlatformaticWorld()`, a function that returns an object satisfying the `World` interface from `@workflow/world`. It delegates all operations to the Workflow Service via HTTP.
+The `world` package (`@platformatic/world`) provides `createPlatformaticWorld()`, a function that returns an object satisfying the `World` interface from `@workflow/world`. It delegates all operations to the Workflow Service via HTTP.
 
 ```typescript
 export function createPlatformaticWorld (config: PlatformaticWorldConfig) {
@@ -1056,7 +1056,7 @@ The Platformatic World can run standalone without K8s or ICC. This enables local
 2. **Create a database** — `createdb workflow`
 3. **Start the Workflow Service** — it runs migrations automatically on startup
    ```bash
-   DATABASE_URL=postgres://localhost:5432/workflow node packages/workflow-service/dist/index.js
+   DATABASE_URL=postgres://localhost:5432/workflow node packages/workflow/dist/index.js
    ```
    The service detects no K8s service account token → starts in single-tenant mode (no auth, single implicit app).
 4. **Configure the app** — add to `.env`:
