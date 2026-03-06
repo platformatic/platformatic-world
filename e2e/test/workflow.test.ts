@@ -120,20 +120,20 @@ let wfService: SpawnedProcess
 let nextApp: SpawnedProcess
 
 before(async () => {
-  // 0. Clean up the database from any previous test runs
-  const { default: pg } = await import('pg')
-  const client = new pg.Client(DB_URL)
-  await client.connect()
-  await client.query('TRUNCATE workflow_events, workflow_hooks, workflow_queue_messages, workflow_steps, workflow_waits, workflow_stream_chunks, workflow_runs, workflow_queue_handlers CASCADE')
-  await client.end()
-
-  // 1. Start the workflow service in single-tenant mode
+  // 1. Start the workflow service in single-tenant mode (runs migrations, creates tables)
   wfService = startProcess('node', ['src/server.ts'], {
     DATABASE_URL: DB_URL,
     PORT: String(WF_PORT),
   }, WORKFLOW_ROOT)
 
   await waitForReady(`${WF_URL}/status`)
+
+  // 2. Clean up stale data from any previous test runs (tables exist after migrations)
+  const { default: pg } = await import('pg')
+  const client = new pg.Client(DB_URL)
+  await client.connect()
+  await client.query('TRUNCATE workflow_events, workflow_hooks, workflow_queue_messages, workflow_steps, workflow_waits, workflow_stream_chunks, workflow_runs, workflow_queue_handlers CASCADE')
+  await client.end()
 
   // 2. Start the Next.js app (already built)
   nextApp = startProcess('npx', ['next', 'start', '-p', String(NEXT_PORT)], {
