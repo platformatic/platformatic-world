@@ -112,5 +112,6 @@ jobs:
 
       - name: Run e2e tests
         run: pnpm test:e2e
+        timeout-minutes: 5
         env:
           DATABASE_URL: postgresql://wf:wf@localhost:5434/workflow
