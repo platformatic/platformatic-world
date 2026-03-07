@@ -9,7 +9,7 @@ export default async function hooksPlugin (app: FastifyInstance): Promise<void> 
     const appId = request.appId
 
     const result = await app.pg.query(
-      'SELECT * FROM workflow_hooks WHERE id = $1 AND application_id = $2',
+      'SELECT * FROM workflow_hooks WHERE correlation_id = $1 AND application_id = $2',
       [hookId, appId]
     )
 
