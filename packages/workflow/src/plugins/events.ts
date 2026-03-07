@@ -100,7 +100,7 @@ function formatStep (row: any, resolveData?: string) {
 function formatHook (row: any) {
   const hook: any = {
     runId: row.run_id,
-    hookId: row.id,
+    hookId: row.correlation_id,
     token: row.token,
     status: row.status,
     ownerId: row.owner_id,
@@ -109,6 +109,7 @@ function formatHook (row: any) {
     metadata: decodeData(row.metadata),
     createdAt: row.created_at,
     specVersion: row.spec_version,
+    isWebhook: row.is_webhook ?? false,
   }
   if (row.received_at) hook.receivedAt = row.received_at
   if (row.disposed_at) hook.disposedAt = row.disposed_at
@@ -140,6 +141,18 @@ async function insertEvent (client: pg.PoolClient, runId: string, appId: number,
 }
 
 export default async function eventsPlugin (app: FastifyInstance): Promise<void> {
+  // Custom error handler to include meta in error responses (for SDK compatibility)
+  app.setErrorHandler((error: any, _request, reply) => {
+    const statusCode = error.statusCode || 500
+    const response: any = {
+      statusCode,
+      error: statusCode >= 500 ? 'Internal Server Error' : error.message,
+      message: error.message,
+    }
+    if (error.meta) response.meta = error.meta
+    reply.code(statusCode).send(response)
+  })
+
   // Create event (main write path)
   app.post('/api/v1/apps/:appId/runs/:runId/events', async (request) => {
     const { runId: rawRunId } = request.params as { runId: string }
@@ -287,19 +300,45 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
         }
 
         case 'step_started': {
-          const attempt = body.eventData?.attempt || 1
           // Find step by correlation_id + run_id
           const stepResult = await client.query(
-            'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3',
+            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3',
             [rawRunId, body.correlationId, appId]
           )
+
           if (stepResult.rows.length > 0) {
+            const step = stepResult.rows[0]
+
+            // Check if step is in a terminal state (completed/cancelled)
+            if (step.status === 'completed' || step.status === 'cancelled') {
+              await client.query('COMMIT')
+              const err: any = new Error(`Step ${body.correlationId} is in terminal state: ${step.status}`)
+              err.statusCode = 409
+              throw err
+            }
+
+            // Check if retry_after timestamp hasn't been reached yet
+            if (step.retry_after && new Date(step.retry_after) > new Date()) {
+              await client.query('COMMIT')
+              const err: any = new Error(`Step ${body.correlationId} retryAfter not reached`)
+              err.statusCode = 425
+              err.meta = { retryAfter: new Date(step.retry_after).toISOString() }
+              throw err
+            }
+
+            // Increment attempt when retrying: step_retrying sets status='pending'
+            // AND retry_after to a timestamp. If both are set, this is a retry.
+            // (retry_after still has the value here — it's cleared in the UPDATE below)
+            const isRetry = step.status === 'pending' && step.retry_after !== null
+            const attempt = isRetry ? step.attempt + 1 : (body.eventData?.attempt || step.attempt || 1)
+
             await client.query(
-              `UPDATE workflow_steps SET status = 'running', attempt = $3, started_at = NOW(), updated_at = NOW()
+              `UPDATE workflow_steps SET status = 'running', attempt = $3, retry_after = NULL, started_at = NOW(), updated_at = NOW()
                WHERE id = $1 AND application_id = $2`,
-              [stepResult.rows[0].id, appId, attempt]
+              [step.id, appId, attempt]
             )
           }
+
           const eventRow = await insertEvent(client, rawRunId, appId, body)
           const stepRow = stepResult.rows.length > 0
             ? (await client.query('SELECT * FROM workflow_steps WHERE id = $1', [stepResult.rows[0].id])).rows[0]
@@ -400,11 +439,11 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
           }
 
           await client.query(
-            `INSERT INTO workflow_hooks (id, run_id, application_id, correlation_id, token, owner_id, project_id, environment, metadata, spec_version)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            `INSERT INTO workflow_hooks (id, run_id, application_id, correlation_id, token, owner_id, project_id, environment, metadata, spec_version, is_webhook)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [hookId, rawRunId, appId, body.correlationId, eventData.token,
               eventData.ownerId || '', eventData.projectId || '', eventData.environment || '',
-              metadata, body.specVersion || null]
+              metadata, body.specVersion || null, eventData.isWebhook ?? false]
           )
 
           const eventRow = await insertEvent(client, rawRunId, appId, body)

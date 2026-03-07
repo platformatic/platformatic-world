@@ -139,12 +139,12 @@ export function createStorage (client: HttpClient) {
     hooks: {
       get: async (hookId: string, params?: any) => {
         const result = await client.get(`/hooks/${hookId}`, buildQuery(params))
-        return coerceDates(result)
+        return restoreEntity(result)
       },
 
       getByToken: async (token: string, params?: any) => {
         const result = await client.get(`/hooks/by-token/${token}`, buildQuery(params))
-        return coerceDates(result)
+        return restoreEntity(result)
       },
 
       list: async (params: any) => {
