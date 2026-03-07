@@ -1,0 +1,10 @@
+This product includes code adapted from the Vercel Workflow SDK.
+
+  Project: https://github.com/vercel/workflow
+  Copyright 2025 Vercel Inc.
+  Licensed under the Apache License, Version 2.0
+
+The following files contain code adapted from the Vercel Workflow SDK e2e test suite:
+
+  e2e/workflows/e2e.ts        — workflow definitions
+  e2e/test/workflow.test.ts    — e2e test scenarios

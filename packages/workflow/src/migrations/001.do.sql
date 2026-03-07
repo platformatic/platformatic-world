@@ -101,12 +101,17 @@ CREATE TABLE workflow_hooks (
   project_id      VARCHAR NOT NULL DEFAULT '',
   environment     VARCHAR NOT NULL DEFAULT '',
   metadata        BYTEA,
+  status          VARCHAR NOT NULL DEFAULT 'pending',
+  is_webhook      BOOLEAN NOT NULL DEFAULT false,
+  received_at     TIMESTAMPTZ,
+  disposed_at     TIMESTAMPTZ,
   spec_version    INTEGER,
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_wh_token ON workflow_hooks (token);
 CREATE INDEX idx_wh_run_id ON workflow_hooks (run_id);
+CREATE INDEX idx_wh_status ON workflow_hooks (application_id, status);
 
 CREATE TABLE workflow_waits (
   id              VARCHAR PRIMARY KEY,
@@ -197,4 +202,13 @@ CREATE TABLE workflow_deployment_versions (
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (application_id, deployment_version)
+);
+
+CREATE TABLE workflow_app_quotas (
+  application_id  INTEGER NOT NULL PRIMARY KEY REFERENCES workflow_applications(id),
+  max_runs        INTEGER NOT NULL DEFAULT 10000,
+  max_events_per_run INTEGER NOT NULL DEFAULT 10000,
+  max_queue_per_minute INTEGER NOT NULL DEFAULT 1000,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
 );

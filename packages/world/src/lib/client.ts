@@ -6,6 +6,25 @@ export interface ClientConfig {
   apiKey?: string
 }
 
+function createAPIError (statusCode: number, text: string): Error {
+  let meta: any
+  try {
+    const parsed = JSON.parse(text)
+    meta = parsed.meta
+  } catch {
+    // Not JSON
+  }
+  const err: any = new Error(`HTTP ${statusCode}: ${text}`)
+  // Only set WorkflowAPIError name for specific status codes the SDK expects
+  if (statusCode === 409 || statusCode === 410 || statusCode === 425 || statusCode === 429) {
+    err.name = 'WorkflowAPIError'
+  }
+  err.status = statusCode
+  err.statusCode = statusCode
+  if (meta) err.meta = meta
+  return err
+}
+
 export class HttpClient {
   #pool: Pool
   #baseUrl: string
@@ -41,9 +60,7 @@ export class HttpClient {
 
     if (response.statusCode >= 400) {
       const text = await response.body.text()
-      throw Object.assign(new Error(`HTTP ${response.statusCode}: ${text}`), {
-        statusCode: response.statusCode,
-      })
+      throw createAPIError(response.statusCode, text)
     }
 
     if (response.statusCode === 204) {
@@ -73,9 +90,7 @@ export class HttpClient {
 
     if (response.statusCode >= 400) {
       const text = await response.body.text()
-      throw Object.assign(new Error(`HTTP ${response.statusCode}: ${text}`), {
-        statusCode: response.statusCode,
-      })
+      throw createAPIError(response.statusCode, text)
     }
 
     return response.body.json()
@@ -94,9 +109,7 @@ export class HttpClient {
 
     if (response.statusCode >= 400) {
       const text = await response.body.text()
-      throw Object.assign(new Error(`HTTP ${response.statusCode}: ${text}`), {
-        statusCode: response.statusCode,
-      })
+      throw createAPIError(response.statusCode, text)
     }
 
     if (response.statusCode === 204) {
@@ -126,9 +139,7 @@ export class HttpClient {
 
     if (response.statusCode >= 400) {
       const text = await response.body.text()
-      throw Object.assign(new Error(`HTTP ${response.statusCode}: ${text}`), {
-        statusCode: response.statusCode,
-      })
+      throw createAPIError(response.statusCode, text)
     }
 
     const chunks: Buffer[] = []
