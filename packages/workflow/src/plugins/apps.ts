@@ -6,7 +6,7 @@ import { AppNotFound, Forbidden, BadRequest } from '../lib/errors.ts'
 export default async function appsPlugin (app: FastifyInstance): Promise<void> {
   // Create application + issue first API key
   app.post('/api/v1/apps', async (request, reply) => {
-    if (!request.isMasterKey) throw new Forbidden('master key required')
+    if (!request.isAdmin) throw new Forbidden('admin access required')
 
     const { appId } = request.body as { appId: string }
     if (!appId) throw new BadRequest('appId is required')
@@ -45,7 +45,7 @@ export default async function appsPlugin (app: FastifyInstance): Promise<void> {
 
   // Rotate API key
   app.post('/api/v1/apps/:appId/keys/rotate', async (request) => {
-    if (!request.isMasterKey) throw new Forbidden('master key required')
+    if (!request.isAdmin) throw new Forbidden('admin access required')
 
     const { appId } = request.params as { appId: string }
 
@@ -88,7 +88,7 @@ export default async function appsPlugin (app: FastifyInstance): Promise<void> {
 
   // Create K8s binding
   app.post('/api/v1/apps/:appId/k8s-binding', async (request, reply) => {
-    if (!request.isMasterKey) throw new Forbidden('master key required')
+    if (!request.isAdmin) throw new Forbidden('admin access required')
 
     const { appId } = request.params as { appId: string }
     const { namespace, serviceAccount } = request.body as { namespace: string; serviceAccount: string }
@@ -116,7 +116,7 @@ export default async function appsPlugin (app: FastifyInstance): Promise<void> {
 
   // Delete K8s binding
   app.delete('/api/v1/apps/:appId/k8s-binding', async (request) => {
-    if (!request.isMasterKey) throw new Forbidden('master key required')
+    if (!request.isAdmin) throw new Forbidden('admin access required')
 
     const { appId } = request.params as { appId: string }
     const { namespace, serviceAccount } = request.body as { namespace: string; serviceAccount: string }
