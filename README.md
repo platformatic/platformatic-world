@@ -6,27 +6,29 @@ Platformatic World solves the version-pinning problem for [Workflow DevKit](http
 
 ## Architecture
 
-```
-                                    ┌──────────────────────────┐
-                                    │   Workflow Service        │
-                                    │   (Fastify + PostgreSQL)  │
- ┌─────────┐   HTTP/REST            │                          │
- │  Pod v1  │ ◄────────────────────► │  Events, Runs, Steps     │
- └─────────┘                        │  Queue Router (v1→Pod v1) │
-                                    │  Hooks, Streams, Waits    │
- ┌─────────┐   HTTP/REST            │  Encryption Keys          │
- │  Pod v2  │ ◄────────────────────► │  Queue Router (v2→Pod v2) │
- └─────────┘                        │                          │
-                                    └──────────┬───────────────┘
- ┌─────────┐   Master Key                      │
- │   ICC    │ ──────────────────────────────────┘
- └─────────┘   Draining, Versions, App Provisioning
+```mermaid
+graph LR
+    PodV1["Pod v1"]
+    PodV2["Pod v2"]
+    ICC["ICC"]
+    WF["Workflow Service
+    Fastify + PostgreSQL"]
+
+    PodV1 <-->|"HTTP/REST"| WF
+    PodV2 <-->|"HTTP/REST"| WF
+    ICC -->|"Master Key"| WF
+
+    style WF fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a5f
+    style PodV1 fill:#d1fae5,stroke:#16a34a,stroke-width:2px,color:#14532d
+    style PodV2 fill:#d1fae5,stroke:#16a34a,stroke-width:2px,color:#14532d
+    style ICC fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f
 ```
 
 Two packages:
 
-- **`@platformatic/workflow-service`** -- Fastify REST API that owns storage, queue routing, and deployment lifecycle. Multi-tenant with per-app isolation.
-- **`@platformatic/world-client`** -- Thin HTTP client implementing the `@workflow/world` `World` interface. Drop-in replacement for other world implementations.
+- **`@platformatic/workflow`** (`packages/workflow/`) -- Fastify REST API that owns storage, queue routing, and deployment lifecycle. Multi-tenant with per-app isolation.
+- **`@platformatic/world`** (`packages/world/`) -- Thin HTTP client implementing the `@workflow/world` `World` interface. Drop-in replacement for other world implementations.
+- **`e2e/`** -- Next.js test app + end-to-end test suites (57 Vercel-compatible tests + our own integration tests).
 
 ## Prerequisites
 
@@ -44,7 +46,7 @@ docker compose up -d
 pnpm install
 
 # Start the workflow service
-WF_MASTER_KEY=my-secret-key node packages/workflow-service/src/server.ts
+WF_MASTER_KEY=my-secret-key node packages/workflow/src/server.ts
 ```
 
 The service starts on `http://localhost:3042` by default.
@@ -64,7 +66,7 @@ curl -X POST http://localhost:3042/api/v1/apps \
 ### Use the World Client
 
 ```typescript
-import { createPlatformaticWorld } from '@platformatic/world-client'
+import { createPlatformaticWorld } from '@platformatic/world'
 
 const world = createPlatformaticWorld({
   serviceUrl: 'http://localhost:3042',
@@ -291,29 +293,27 @@ The `/metrics` endpoint returns Prometheus-compatible metrics:
 ## Development
 
 ```bash
-# Start PostgreSQL
+# Start PostgreSQL (port 5434)
 docker compose up -d
 
 # Install dependencies
 pnpm install
 
-# Run workflow-service tests (62 tests)
-node --test --test-concurrency=1 packages/workflow-service/test/*.test.ts
-
-# Run world-client integration tests (requires running service)
-WF_MASTER_KEY=test-master-key WF_AUTH_MODE=api-key \
-  node packages/workflow-service/src/server.ts &
-node --test packages/world-client/test/*.test.ts
-
-# Run all tests
+# Run all unit/integration tests (71 workflow + 10 world)
 pnpm test
+
+# Run Vercel-compatible e2e tests (57 tests — requires PostgreSQL on port 5434)
+cd e2e && node --test --test-force-exit test/vercel-e2e.test.ts
+
+# Run our own e2e tests
+cd e2e && node --test --test-force-exit test/workflow.test.ts
 ```
 
 ### Project Structure
 
 ```
 packages/
-  workflow-service/
+  workflow/
     src/
       app.ts                  # buildApp() factory
       server.ts               # CLI entrypoint
@@ -350,9 +350,9 @@ packages/
         001.do.sql            # Core schema
         002.do.sql            # Hook status columns
         003.do.sql            # Quotas table
-    test/                     # 62 tests across 14 suites
+    test/                     # 71 tests across 16 suites
 
-  world-client/
+  world/
     src/
       index.ts                # createPlatformaticWorld() factory
       lib/
