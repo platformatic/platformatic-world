@@ -5,10 +5,17 @@ import type pg from 'pg'
 interface K8sConfig {
   apiServer: string
   caCert?: string
+  adminServiceAccount?: string
+}
+
+export interface K8sValidationResult {
+  applicationId: number | null
+  isAdmin: boolean
 }
 
 interface CacheEntry {
-  applicationId: number
+  applicationId: number | null
+  isAdmin: boolean
   expiresAt: number
 }
 
@@ -29,11 +36,11 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
     }
   }
 
-  return async function validateK8sToken (token: string): Promise<number | null> {
+  return async function validateK8sToken (token: string): Promise<K8sValidationResult | null> {
     // Check cache
     const cached = cache.get(token)
     if (cached && cached.expiresAt > Date.now()) {
-      return cached.applicationId
+      return { applicationId: cached.applicationId, isAdmin: cached.isAdmin }
     }
 
     // Call K8s TokenReview API
@@ -77,23 +84,28 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
     const namespace = parts[2]
     const serviceAccount = parts[3]
 
-    // Look up binding
+    // Check if this is the admin service account (e.g. ICC)
+    const identity = `${namespace}:${serviceAccount}`
+    const isAdmin = config.adminServiceAccount === identity
+
+    // Look up binding (admin identities may not have one)
     const result = await pool.query(
       `SELECT application_id FROM workflow_app_k8s_bindings
        WHERE namespace = $1 AND service_account = $2`,
       [namespace, serviceAccount]
     )
 
-    if (result.rows.length === 0) return null
+    const applicationId = result.rows.length > 0 ? result.rows[0].application_id : null
 
-    const applicationId = result.rows[0].application_id
+    if (applicationId === null && !isAdmin) return null
 
     // Cache with TTL (use a conservative 5-minute cache for K8s tokens)
     cache.set(token, {
       applicationId,
+      isAdmin,
       expiresAt: Date.now() + 5 * 60 * 1000 - EXPIRY_BUFFER,
     })
 
-    return applicationId
+    return { applicationId, isAdmin }
   }
 }

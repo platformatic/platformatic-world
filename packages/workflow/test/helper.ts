@@ -1,52 +1,53 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHash } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { buildApp } from '../src/app.ts'
 
 const BASE_CONNECTION_STRING = process.env.DATABASE_URL || 'postgresql://wf:wf@localhost:5434/workflow'
-const MASTER_KEY = 'test-master-key-for-testing'
-
-export { MASTER_KEY }
 
 export interface TestContext {
   app: FastifyInstance
   appId: string
   apiKey: string
-  masterKey: string
 }
 
 export async function setupTest (): Promise<TestContext> {
+  const appIdStr = `test-app-${randomBytes(4).toString('hex')}`
+
   const app = await buildApp({
     connectionString: BASE_CONNECTION_STRING,
-    auth: {
-      mode: 'api-key',
-      masterKey: MASTER_KEY,
-    },
-    enablePoller: false, // Disable poller in tests
+    singleTenant: true,
+    defaultAppId: appIdStr,
+    enablePoller: false,
   })
 
   await app.ready()
 
-  // Provision a test application
-  const appIdStr = `test-app-${randomBytes(4).toString('hex')}`
-  const response = await app.inject({
-    method: 'POST',
-    url: '/api/v1/apps',
-    headers: { authorization: `Bearer ${MASTER_KEY}` },
-    payload: { appId: appIdStr },
-  })
+  // Get the auto-provisioned app's numeric ID
+  const appResult = await app.pg.query(
+    'SELECT id FROM workflow_applications WHERE app_id = $1',
+    [appIdStr]
+  )
+  const applicationId = appResult.rows[0].id
 
-  const body = JSON.parse(response.body)
+  // Create an API key for tests that need one
+  const apiKey = `wfk_${randomBytes(32).toString('hex')}`
+  const keyHash = createHash('sha256').update(apiKey).digest('hex')
+  const keyPrefix = apiKey.slice(0, 12)
+
+  await app.pg.query(
+    `INSERT INTO workflow_app_keys (application_id, key_hash, key_prefix)
+     VALUES ($1, $2, $3)`,
+    [applicationId, keyHash, keyPrefix]
+  )
 
   return {
     app,
-    appId: body.appId,
-    apiKey: body.apiKey,
-    masterKey: MASTER_KEY,
+    appId: appIdStr,
+    apiKey,
   }
 }
 
 export async function teardownTest (ctx: TestContext): Promise<void> {
-  // Clean up test data
   const appResult = await ctx.app.pg.query(
     'SELECT id FROM workflow_applications WHERE app_id = $1',
     [ctx.appId]
@@ -55,7 +56,6 @@ export async function teardownTest (ctx: TestContext): Promise<void> {
   if (appResult.rows.length > 0) {
     const applicationId = appResult.rows[0].id
 
-    // Delete in correct order (foreign keys)
     await ctx.app.pg.query('DELETE FROM workflow_stream_chunks WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_waits WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_hooks WHERE application_id = $1', [applicationId])

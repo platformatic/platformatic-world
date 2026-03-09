@@ -1,31 +1,30 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { createApiKeyValidator } from './api-key.ts'
 import { createK8sTokenValidator } from './k8s-token.ts'
-import { validateMasterKey } from './master-key.ts'
 import { Unauthorized, Forbidden } from '../errors.ts'
 
 export interface AuthConfig {
   mode: 'api-key' | 'k8s-token' | 'both' | 'none'
-  masterKey?: string
   defaultAppId?: number
   k8s?: {
     apiServer: string
     caCert?: string
+    adminServiceAccount?: string
   }
 }
 
 declare module 'fastify' {
   interface FastifyRequest {
     appId: number
-    isMasterKey: boolean
+    isAdmin: boolean
   }
 }
 
 // Paths that skip auth entirely
 const PUBLIC_PATHS = new Set(['/ready', '/status', '/metrics'])
 
-// Paths that require master key (not app-level auth)
-function isMasterKeyPath (url: string): boolean {
+// Paths that require admin access (not app-level auth)
+function isAdminPath (url: string): boolean {
   return (url.startsWith('/api/v1/apps') && (
     url.endsWith('/keys/rotate') ||
     url.endsWith('/k8s-binding') ||
@@ -35,13 +34,13 @@ function isMasterKeyPath (url: string): boolean {
 
 async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<void> {
   app.decorateRequest('appId', 0)
-  app.decorateRequest('isMasterKey', false)
+  app.decorateRequest('isAdmin', false)
 
   // No-auth mode: set appId from config and skip all token parsing
   if (config.mode === 'none') {
     app.addHook('onRequest', async (request: FastifyRequest) => {
       request.appId = config.defaultAppId || 0
-      request.isMasterKey = true
+      request.isAdmin = true
     })
     return
   }
@@ -63,10 +62,39 @@ async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<vo
 
     const token = authHeader.slice(7)
 
-    // Check master key first for admin endpoints
-    if (config.masterKey && validateMasterKey(token, config.masterKey)) {
-      request.isMasterKey = true
-      // Master key can also access app-scoped endpoints when appId is in URL
+    // Try API key validation
+    let applicationId: number | null = null
+
+    if (config.mode === 'api-key' || config.mode === 'both') {
+      applicationId = await validateApiKey(token)
+    }
+
+    if (applicationId === null && (config.mode === 'k8s-token' || config.mode === 'both')) {
+      if (validateK8s) {
+        const k8sResult = await validateK8s(token)
+        if (k8sResult) {
+          applicationId = k8sResult.applicationId
+          if (k8sResult.isAdmin) {
+            request.isAdmin = true
+          }
+        }
+      }
+    }
+
+    if (applicationId === null && !request.isAdmin) {
+      // Admin K8s identity may not have an app binding — resolve appId from URL
+      if (isAdminPath(url)) {
+        throw new Forbidden('admin access required')
+      }
+      throw new Unauthorized('invalid credentials')
+    }
+
+    if (applicationId !== null) {
+      request.appId = applicationId
+    }
+
+    // Admin can access app-scoped endpoints when appId is in URL
+    if (request.isAdmin && applicationId === null) {
       const appIdMatch = url.match(/\/api\/v1\/apps\/([^/]+)/)
       if (appIdMatch) {
         const result = await app.pg.query(
@@ -80,29 +108,10 @@ async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<vo
       return
     }
 
-    // Master-key-only endpoints reject non-master tokens
-    if (isMasterKeyPath(url)) {
-      throw new Forbidden('master key required')
+    // Admin-only endpoints reject non-admin tokens
+    if (isAdminPath(url) && !request.isAdmin) {
+      throw new Forbidden('admin access required')
     }
-
-    // Try API key validation
-    let applicationId: number | null = null
-
-    if (config.mode === 'api-key' || config.mode === 'both') {
-      applicationId = await validateApiKey(token)
-    }
-
-    if (applicationId === null && (config.mode === 'k8s-token' || config.mode === 'both')) {
-      if (validateK8s) {
-        applicationId = await validateK8s(token)
-      }
-    }
-
-    if (applicationId === null) {
-      throw new Unauthorized('invalid credentials')
-    }
-
-    request.appId = applicationId
 
     // Verify URL appId matches auth-derived appId
     const appIdMatch = url.match(/\/api\/v1\/apps\/([^/]+)/)
