@@ -17,7 +17,7 @@ graph LR
 
     PodV1 <-->|"HTTP/REST"| WF
     PodV2 <-->|"HTTP/REST"| WF
-    ICC -->|"Master Key"| WF
+    ICC -->|"Admin API"| WF
     WF -->|"SQL"| PG
 
     style WF fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a5f
