@@ -3,10 +3,11 @@
 
 import { sleep, FatalError, RetryableError, createHook, createWebhook, type RequestWithResponse, fetch, getStepMetadata, getWorkflowMetadata } from 'workflow'
 import { start } from 'workflow/api'
+import { callThrower, stepThatThrowsFromHelper } from './helpers'
 
 // ---- addTen: multi-step chaining ----
 
-async function add (a: number, b: number) {
+export async function add (a: number, b: number) {
   'use step'
   return a + b
 }
@@ -564,5 +565,168 @@ export async function hookDisposeTestWorkflow (token: string, customData: string
     customData: customDataResult,
     disposed: true,
     hookDisposeTestData: 'workflow_completed',
+  }
+}
+
+// ---- errorRetryFatal: FatalError fails immediately (no retries, attempt=1) ----
+
+export async function errorRetryFatal () {
+  'use workflow'
+  await throwFatalError()
+  return 'never reached'
+}
+
+// ---- hook with sleep: concurrent hook payloads + sleep ----
+
+async function processPayload (payload: { type: string, id?: number }) {
+  'use step'
+  return { processed: true, type: payload.type, id: payload.id }
+}
+
+export async function hookWithSleepWorkflow (token: string) {
+  'use workflow'
+
+  type Payload = { type: string, id?: number, done?: boolean }
+
+  const hook = createHook<Payload>({ token })
+
+  // Concurrent sleep that won't complete during the test
+  /* eslint-disable-next-line no-void */
+  void sleep('1d')
+
+  const results: any[] = []
+
+  for await (const payload of hook) {
+    const result = await processPayload(payload)
+    results.push(result)
+
+    if (payload.done) {
+      break
+    }
+  }
+
+  return results
+}
+
+// ---- sleep with sequential steps (control test) ----
+
+async function addNumbers (a: number, b: number) {
+  'use step'
+  return a + b
+}
+
+export async function sleepWithSequentialStepsWorkflow () {
+  'use workflow'
+
+  let shouldCancel = false
+  /* eslint-disable-next-line no-void */
+  void sleep('1d').then(() => {
+    shouldCancel = true
+  })
+
+  const a = await addNumbers(1, 2)
+  const b = await addNumbers(a, 3)
+  const c = await addNumbers(b, 4)
+  return { a, b, c, shouldCancel }
+}
+
+// ---- error: retry with counter (using getStepMetadata for attempt tracking) ----
+
+async function retryUntilAttempt3WithMeta () {
+  'use step'
+  const { attempt } = getStepMetadata()
+  if (attempt < 3) {
+    throw new Error(`not yet (attempt ${attempt})`)
+  }
+  return { finalAttempt: attempt }
+}
+
+export async function errorRetrySuccess () {
+  'use workflow'
+  return await retryUntilAttempt3WithMeta()
+}
+
+// ---- cross-file error: workflow error from imported module ----
+
+export async function errorWorkflowCrossFile () {
+  'use workflow'
+  callThrower()
+  return 'never reached'
+}
+
+// ---- cross-file error: step error from imported module ----
+
+export async function errorStepCrossFile () {
+  'use workflow'
+  try {
+    await stepThatThrowsFromHelper()
+    return { caught: false, message: null }
+  } catch (e: any) {
+    return { caught: true, message: e.message }
+  }
+}
+
+// ---- static method workflows: Calculator ----
+
+export class MathService {
+  static async add (a: number, b: number) {
+    'use step'
+    return a + b
+  }
+
+  static async multiply (a: number, b: number) {
+    'use step'
+    return a * b
+  }
+}
+
+export class Calculator {
+  static async compute (a: number, b: number) {
+    'use workflow'
+    const sum = await MathService.add(a, b)
+    const product = await MathService.multiply(a, b)
+    return { sum, product }
+  }
+}
+
+// ---- static method workflows: AllInOneService ----
+
+export class AllInOneService {
+  static async processStep (data: string) {
+    'use step'
+    return data.toUpperCase()
+  }
+
+  static async workflow (input: string) {
+    'use workflow'
+    const result = await AllInOneService.processStep(input)
+    return { processed: result }
+  }
+}
+
+// ---- static method workflows: ChainableService ----
+
+export class ChainableService {
+  static async step1 (input: number) {
+    'use step'
+    return input * 2
+  }
+
+  static async step2 (input: number) {
+    'use step'
+    return input + 10
+  }
+
+  static async step3 (input: number) {
+    'use step'
+    return input * input
+  }
+
+  static async pipeline (input: number) {
+    'use workflow'
+    const a = await ChainableService.step1(input)
+    const b = await ChainableService.step2(a)
+    const c = await ChainableService.step3(b)
+    return { a, b, c }
   }
 }

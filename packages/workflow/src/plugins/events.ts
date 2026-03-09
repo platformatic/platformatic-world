@@ -333,7 +333,7 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
             const attempt = isRetry ? step.attempt + 1 : (body.eventData?.attempt || step.attempt || 1)
 
             await client.query(
-              `UPDATE workflow_steps SET status = 'running', attempt = $3, retry_after = NULL, started_at = NOW(), updated_at = NOW()
+              `UPDATE workflow_steps SET status = 'running', attempt = $3, retry_after = NULL, started_at = COALESCE(started_at, NOW()), updated_at = NOW()
                WHERE id = $1 AND application_id = $2`,
               [step.id, appId, attempt]
             )

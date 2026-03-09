@@ -120,3 +120,9 @@ jobs:
         timeout-minutes: 5
         env:
           DATABASE_URL: postgresql://wf:wf@localhost:5434/workflow
+
+      - name: Run Vercel e2e compatibility tests
+        run: pnpm test:vercel
+        timeout-minutes: 10
+        env:
+          DATABASE_URL: postgresql://wf:wf@localhost:5434/workflow
