@@ -12,13 +12,16 @@ graph LR
     PodV2["Pod v2"]
     ICC["ICC"]
     WF["Workflow Service
-    Fastify + PostgreSQL"]
+    Fastify"]
+    PG[("PostgreSQL")]
 
     PodV1 <-->|"HTTP/REST"| WF
     PodV2 <-->|"HTTP/REST"| WF
     ICC -->|"Master Key"| WF
+    WF -->|"SQL"| PG
 
     style WF fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a5f
+    style PG fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a5f
     style PodV1 fill:#d1fae5,stroke:#16a34a,stroke-width:2px,color:#14532d
     style PodV2 fill:#d1fae5,stroke:#16a34a,stroke-width:2px,color:#14532d
     style ICC fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f
