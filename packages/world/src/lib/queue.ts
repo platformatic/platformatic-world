@@ -31,14 +31,8 @@ export function createQueue (client: HttpClient, config: QueueConfig) {
       const body = await req.json() as { message: unknown; meta: { queueName: ValidQueueName; messageId: MessageId; attempt: number } }
       const result = await handler(body.message, body.meta)
 
-      if (typeof result?.timeoutSeconds === 'number') {
-        // Re-queue with delay for sleep/wait continuation
-        await queue(body.meta.queueName, body.message as QueuePayload, {
-          deploymentId: config.deploymentVersion,
-          delaySeconds: result.timeoutSeconds,
-        })
-      }
-
+      // The queue service handles re-queuing based on the timeoutSeconds in the response.
+      // Do not re-queue here to avoid creating duplicate deferred messages.
       return Response.json(result ?? {})
     }
   }

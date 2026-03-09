@@ -1,9 +1,12 @@
 // Workflow definitions adapted from Vercel's workflow SDK e2e suite.
 // Original: https://github.com/vercel/workflow (Apache-2.0 license)
 
-import { sleep, FatalError, RetryableError, createHook, createWebhook, type RequestWithResponse, fetch, getStepMetadata, getWorkflowMetadata } from 'workflow'
+import { sleep, FatalError, RetryableError, createHook, createWebhook, type RequestWithResponse, fetch, getStepMetadata, getWorkflowMetadata, getWritable } from 'workflow'
 import { start } from 'workflow/api'
 import { callThrower, stepThatThrowsFromHelper } from './helpers'
+import { importedStepOnly } from './_imported_step_only.js'
+import { addVectors, createVector, scaleVector, sumVectors } from './serde-steps.js'
+import { pathsAliasHelper } from '@repo/lib/steps/paths-alias-test'
 
 // ---- addTen: multi-step chaining ----
 
@@ -58,10 +61,10 @@ export async function promiseRaceWorkflow () {
 
 // ---- sleeping: deferred delivery ----
 
-export async function sleepingWorkflow () {
+export async function sleepingWorkflow (durationMs = 10_000) {
   'use workflow'
   const startTime = Date.now()
-  await sleep('10s')
+  await sleep(durationMs)
   const endTime = Date.now()
   return { startTime, endTime }
 }
@@ -155,29 +158,46 @@ export async function hookWorkflow (token: string, customData: string) {
 
 // ---- webhook workflow: HTTP-triggered resume ----
 
+async function sendWebhookResponse (req: RequestWithResponse) {
+  'use step'
+  const body = await req.text()
+  await req.respondWith(new Response('Hello from webhook!'))
+  return body
+}
+
 export async function webhookWorkflow () {
   'use workflow'
-  const results: any[] = []
 
-  const webhook1 = createWebhook()
-  const webhook2 = createWebhook({
+  type Payload = { url: string, method: string, body: string }
+  const payloads: Payload[] = []
+
+  const webhookWithDefaultResponse = createWebhook()
+  const webhookWithStaticResponse = createWebhook({
     respondWith: new Response('Hello from static response!', { status: 402 }),
   })
-  const webhook3 = createWebhook({
+  const webhookWithManualResponse = createWebhook({
     respondWith: 'manual',
   })
 
-  const payload1 = await webhook1
-  results.push({ url: webhook1.url, method: payload1.method })
+  {
+    const req = await webhookWithDefaultResponse
+    const body = await req.text()
+    payloads.push({ url: req.url, method: req.method, body })
+  }
 
-  const payload2 = await webhook2
-  results.push({ url: webhook2.url, method: payload2.method })
+  {
+    const req = await webhookWithStaticResponse
+    const body = await req.text()
+    payloads.push({ url: req.url, method: req.method, body })
+  }
 
-  const payload3 = await webhook3 as unknown as RequestWithResponse
-  await payload3.respondWith(new Response('Hello from webhook!', { status: 200 }))
-  results.push({ url: webhook3.url, method: payload3.method })
+  {
+    const req = await webhookWithManualResponse
+    const body = await sendWebhookResponse(req)
+    payloads.push({ url: req.url, method: req.method, body })
+  }
 
-  return results
+  return payloads
 }
 
 // ---- spawn child workflow from step ----
@@ -681,52 +701,289 @@ export class MathService {
 }
 
 export class Calculator {
-  static async compute (a: number, b: number) {
+  static async calculate (x: number, y: number): Promise<number> {
     'use workflow'
-    const sum = await MathService.add(a, b)
-    const product = await MathService.multiply(a, b)
-    return { sum, product }
+    const sum = await MathService.add(x, y)
+    const result = await MathService.multiply(sum, 2)
+    return result
   }
 }
 
 // ---- static method workflows: AllInOneService ----
 
 export class AllInOneService {
-  static async processStep (data: string) {
+  static async double (n: number): Promise<number> {
     'use step'
-    return data.toUpperCase()
+    return n * 2
   }
 
-  static async workflow (input: string) {
+  static async triple (n: number): Promise<number> {
+    'use step'
+    return n * 3
+  }
+
+  static async processNumber (n: number): Promise<number> {
     'use workflow'
-    const result = await AllInOneService.processStep(input)
-    return { processed: result }
+    const doubled = await AllInOneService.double(n)
+    const tripled = await AllInOneService.triple(n)
+    return doubled + tripled
   }
 }
 
 // ---- static method workflows: ChainableService ----
 
 export class ChainableService {
-  static async step1 (input: number) {
+  static multiplier = 10
+
+  static async multiplyByClassValue (this: typeof ChainableService, n: number): Promise<number> {
     'use step'
-    return input * 2
+    return n * this.multiplier
   }
 
-  static async step2 (input: number) {
+  static async doubleAndMultiply (this: typeof ChainableService, n: number): Promise<number> {
     'use step'
-    return input + 10
+    return n * 2 * this.multiplier
   }
 
-  static async step3 (input: number) {
-    'use step'
-    return input * input
-  }
-
-  static async pipeline (input: number) {
+  static async processWithThis (n: number): Promise<{ multiplied: number, doubledAndMultiplied: number, sum: number }> {
     'use workflow'
-    const a = await ChainableService.step1(input)
-    const b = await ChainableService.step2(a)
-    const c = await ChainableService.step3(b)
-    return { a, b, c }
+    const multiplied = await ChainableService.multiplyByClassValue(n)
+    const doubledAndMultiplied = await ChainableService.doubleAndMultiply(n)
+    return { multiplied, doubledAndMultiplied, sum: multiplied + doubledAndMultiplied }
   }
+}
+
+// ---- imported step only: step from separate file ----
+
+export async function importedStepOnlyWorkflow () {
+  'use workflow'
+  return await importedStepOnly()
+}
+
+// ---- paths alias: import via tsconfig paths ----
+
+async function callPathsAliasHelper () {
+  'use step'
+  return pathsAliasHelper()
+}
+
+export async function pathsAliasWorkflow () {
+  'use workflow'
+  const result = await callPathsAliasHelper()
+  return result
+}
+
+// ---- cross-context serialization (serde) ----
+
+export async function crossContextSerdeWorkflow () {
+  'use workflow'
+  const v1 = await createVector(1, 2, 3)
+  const v2 = await createVector(10, 20, 30)
+  const sum = await addVectors(v1, v2)
+  const scaled = await scaleVector(v1, 5)
+  const vectors = [v1, v2, scaled]
+  const arraySum = await sumVectors(vectors)
+  return {
+    v1: { x: v1.x, y: v1.y, z: v1.z },
+    v2: { x: v2.x, y: v2.y, z: v2.z },
+    sum: { x: sum.x, y: sum.y, z: sum.z },
+    scaled: { x: scaled.x, y: scaled.y, z: scaled.z },
+    arraySum: { x: arraySum.x, y: arraySum.y, z: arraySum.z },
+  }
+}
+
+// ---- fault injection: serverError5xxRetryWorkflow ----
+
+type FaultState = {
+  installStepId: string
+  targetStepId?: string
+  remaining: number
+  triggered: number
+}
+
+const FAULT_MAP_SYMBOL = Symbol.for('__test_5xx_fault_map')
+const FAULT_WRAPPER_INSTALLED_SYMBOL = Symbol.for('__test_5xx_fault_wrapper_installed')
+
+function shouldInjectStepCompletedFault (state: FaultState, data: any): boolean {
+  if (data?.eventType !== 'step_completed') return false
+  const correlationId = typeof data?.correlationId === 'string' ? data.correlationId : null
+  if (!correlationId) return false
+  if (correlationId === state.installStepId) return false
+  state.targetStepId ??= correlationId
+  if (correlationId !== state.targetStepId) return false
+  if (state.remaining <= 0) return false
+  state.remaining--
+  state.triggered++
+  return true
+}
+
+async function installServerErrorFaultInjection (failCount: number) {
+  'use step'
+  const { workflowRunId } = getWorkflowMetadata()
+  const { stepId: installStepId } = getStepMetadata()
+  const world = (globalThis as any)[Symbol.for('@workflow/world//cache')]
+
+  ;(globalThis as any)[FAULT_MAP_SYMBOL] ??= new Map<string, FaultState>()
+  const faultMap = (globalThis as any)[FAULT_MAP_SYMBOL] as Map<string, FaultState>
+
+  faultMap.set(workflowRunId, { installStepId, remaining: failCount, triggered: 0 })
+
+  if (!(world.events.create as any)[FAULT_WRAPPER_INSTALLED_SYMBOL]) {
+    const original = world.events.create.bind(world.events)
+    const wrappedCreate = async (rid: string, data: any, ...rest: any[]): Promise<any> => {
+      const state = faultMap.get(rid)
+      if (state && shouldInjectStepCompletedFault(state, data)) {
+        const err: any = new Error('Injected 5xx')
+        err.name = 'WorkflowAPIError'
+        err.status = 500
+        throw err
+      }
+      return original(rid, data, ...rest)
+    }
+    ;(wrappedCreate as any)[FAULT_WRAPPER_INSTALLED_SYMBOL] = true
+    world.events.create = wrappedCreate
+  }
+}
+
+async function doWork (input: number) {
+  'use step'
+  return input * 2
+}
+
+async function cleanupFaultInjection () {
+  'use step'
+  const { workflowRunId } = getWorkflowMetadata()
+  const faultMap = (globalThis as any)[FAULT_MAP_SYMBOL] as Map<string, FaultState> | undefined
+  const state = faultMap?.get(workflowRunId)
+  const triggered = state?.triggered ?? 0
+  faultMap?.delete(workflowRunId)
+  return triggered
+}
+
+export async function serverError5xxRetryWorkflow (input: number) {
+  'use workflow'
+  await installServerErrorFaultInjection(2)
+  const result = await doWork(input)
+  const retryCount = await cleanupFaultInjection()
+  return { result, retryCount }
+}
+
+// ---- readable stream: step returns a ReadableStream ----
+
+async function genReadableStream () {
+  'use step'
+  const encoder = new TextEncoder()
+  return new ReadableStream({
+    async start (controller) {
+      for (let i = 0; i < 10; i++) {
+        controller.enqueue(encoder.encode(`${i}\n`))
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+      controller.close()
+    },
+  })
+}
+
+export async function readableStreamWorkflow () {
+  'use workflow'
+  const stream = await genReadableStream()
+  return stream
+}
+
+// ---- output stream: getWritable() in workflow, passed to steps ----
+
+async function stepWithOutputStreamBinary (writable: WritableStream, text: string) {
+  'use step'
+  const writer = writable.getWriter()
+  await writer.write(new TextEncoder().encode(text))
+  writer.releaseLock()
+}
+
+async function stepWithOutputStreamObject (writable: WritableStream, obj: any) {
+  'use step'
+  const writer = writable.getWriter()
+  await writer.write(obj)
+  writer.releaseLock()
+}
+
+async function stepCloseOutputStream (writable: WritableStream) {
+  'use step'
+  await writable.close()
+}
+
+export async function outputStreamWorkflow () {
+  'use workflow'
+  const writable = getWritable()
+  const namedWritable = getWritable({ namespace: 'test' })
+  await sleep('1s')
+  await stepWithOutputStreamBinary(writable, 'Hello, world!')
+  await sleep('1s')
+  await stepWithOutputStreamBinary(namedWritable, 'Hello, named stream!')
+  await sleep('1s')
+  await stepWithOutputStreamObject(writable, { foo: 'test' })
+  await sleep('1s')
+  await stepWithOutputStreamObject(namedWritable, { foo: 'bar' })
+  await sleep('1s')
+  await stepCloseOutputStream(writable)
+  await stepCloseOutputStream(namedWritable)
+  return 'done'
+}
+
+// ---- output stream inside step: getWritable() called directly in steps ----
+
+async function stepWithOutputStreamInsideStep (text: string) {
+  'use step'
+  const writable = getWritable()
+  const writer = writable.getWriter()
+  await writer.write(new TextEncoder().encode(text))
+  writer.releaseLock()
+}
+
+async function stepWithNamedOutputStreamInsideStep (namespace: string, obj: any) {
+  'use step'
+  const writable = getWritable({ namespace })
+  const writer = writable.getWriter()
+  await writer.write(obj)
+  writer.releaseLock()
+}
+
+async function stepCloseOutputStreamInsideStep (namespace?: string) {
+  'use step'
+  const writable = getWritable({ namespace })
+  await writable.close()
+}
+
+export async function outputStreamInsideStepWorkflow () {
+  'use workflow'
+  await sleep('1s')
+  await stepWithOutputStreamInsideStep('Hello from step!')
+  await sleep('1s')
+  await stepWithNamedOutputStreamInsideStep('step-ns', { message: 'Hello from named stream in step!' })
+  await sleep('1s')
+  await stepWithOutputStreamInsideStep('Second message')
+  await sleep('1s')
+  await stepWithNamedOutputStreamInsideStep('step-ns', { counter: 42 })
+  await sleep('1s')
+  await stepCloseOutputStreamInsideStep()
+  await stepCloseOutputStreamInsideStep('step-ns')
+  return 'done'
+}
+
+// ---- stepFunctionAsStartArg: step fn ref passed as start() argument ----
+
+async function invokeStepFn (stepFn: (a: number, b: number) => Promise<number>, a: number, b: number) {
+  'use step'
+  return await stepFn(a, b)
+}
+
+export async function stepFunctionAsStartArgWorkflow (
+  stepFn: (a: number, b: number) => Promise<number>,
+  x: number,
+  y: number
+): Promise<{ directResult: number, viaStepResult: number, doubled: number }> {
+  'use workflow'
+  const directResult = await stepFn(x, y)
+  const viaStepResult = await invokeStepFn(stepFn, x, y)
+  const doubled = await stepFn(directResult, directResult)
+  return { directResult, viaStepResult, doubled }
 }

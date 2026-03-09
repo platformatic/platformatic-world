@@ -212,9 +212,13 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
              WHERE id = $1 AND application_id = $2`,
             [rawRunId, appId, output]
           )
-          // Dispose all pending hooks for this run
+          // Clean up all hooks and waits for this run
           await client.query(
             'UPDATE workflow_hooks SET status = \'disposed\', disposed_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status != \'disposed\'',
+            [rawRunId, appId]
+          )
+          await client.query(
+            'UPDATE workflow_waits SET status = \'completed\', completed_at = NOW(), updated_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status = \'waiting\'',
             [rawRunId, appId]
           )
           const eventRow = await insertEvent(client, rawRunId, appId, body)
@@ -241,6 +245,10 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
             'UPDATE workflow_hooks SET status = \'disposed\', disposed_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status != \'disposed\'',
             [rawRunId, appId]
           )
+          await client.query(
+            'UPDATE workflow_waits SET status = \'completed\', completed_at = NOW(), updated_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status = \'waiting\'',
+            [rawRunId, appId]
+          )
           const eventRow = await insertEvent(client, rawRunId, appId, body)
           const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
           if (!runRow) throw new RunNotFound(rawRunId)
@@ -256,6 +264,10 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
           )
           await client.query(
             'UPDATE workflow_hooks SET status = \'disposed\', disposed_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status != \'disposed\'',
+            [rawRunId, appId]
+          )
+          await client.query(
+            'UPDATE workflow_waits SET status = \'completed\', completed_at = NOW(), updated_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status = \'waiting\'',
             [rawRunId, appId]
           )
           const eventRow = await insertEvent(client, rawRunId, appId, body)
@@ -326,10 +338,11 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
               throw err
             }
 
-            // Increment attempt when retrying: step_retrying sets status='pending'
-            // AND retry_after to a timestamp. If both are set, this is a retry.
-            // (retry_after still has the value here — it's cleared in the UPDATE below)
-            const isRetry = step.status === 'pending' && step.retry_after !== null
+            // Increment attempt when retrying: after a retry cycle (step_started →
+            // error → step_retrying → step_started), started_at is already set.
+            // We can't rely on retry_after because the SDK only sends retryAfter
+            // for RetryableError — regular errors have retry_after = NULL.
+            const isRetry = step.status === 'pending' && step.started_at !== null
             const attempt = isRetry ? step.attempt + 1 : (body.eventData?.attempt || step.attempt || 1)
 
             await client.query(
@@ -420,13 +433,20 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
           const eventData = body.eventData || {}
           const metadata = eventData.metadata ? encodeData(eventData.metadata) : null
 
-          // Check token conflict
-          const existing = await client.query(
-            'SELECT id FROM workflow_hooks WHERE token = $1',
-            [eventData.token]
+          // ON CONFLICT DO NOTHING handles the partial unique index atomically.
+          // If another active hook with the same token exists, the INSERT is skipped.
+          const insertResult = await client.query(
+            `INSERT INTO workflow_hooks (id, run_id, application_id, correlation_id, token, owner_id, project_id, environment, metadata, spec_version, is_webhook)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             ON CONFLICT (token) WHERE status = 'pending' DO NOTHING
+             RETURNING id`,
+            [hookId, rawRunId, appId, body.correlationId, eventData.token,
+              eventData.ownerId || '', eventData.projectId || '', eventData.environment || '',
+              metadata, body.specVersion || null, eventData.isWebhook ?? false]
           )
-          if (existing.rows.length > 0) {
-            // Create hook_conflict event instead
+
+          if (insertResult.rows.length === 0) {
+            // Token conflict — another active hook already exists
             const conflictBody = {
               eventType: 'hook_conflict',
               correlationId: body.correlationId,
@@ -437,14 +457,6 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
             await client.query('COMMIT')
             return { event: formatEvent(eventRow, resolveData) }
           }
-
-          await client.query(
-            `INSERT INTO workflow_hooks (id, run_id, application_id, correlation_id, token, owner_id, project_id, environment, metadata, spec_version, is_webhook)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [hookId, rawRunId, appId, body.correlationId, eventData.token,
-              eventData.ownerId || '', eventData.projectId || '', eventData.environment || '',
-              metadata, body.specVersion || null, eventData.isWebhook ?? false]
-          )
 
           const eventRow = await insertEvent(client, rawRunId, appId, body)
           const hookRow = (await client.query('SELECT * FROM workflow_hooks WHERE id = $1', [hookId])).rows[0]

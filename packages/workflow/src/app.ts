@@ -32,7 +32,7 @@ export async function buildApp (config: AppConfig): Promise<FastifyInstance> {
 
   // Database
   const pool = await initDb({ connectionString: config.connectionString })
-  decorateDb(app, pool)
+  decorateDb(app, pool, config.connectionString)
 
   // Single-tenant: auto-provision default app and construct auth config
   let authConfig: AuthConfig

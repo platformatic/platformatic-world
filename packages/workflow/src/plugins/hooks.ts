@@ -3,13 +3,15 @@ import { HookNotFound } from '../lib/errors.ts'
 import { formatHook } from './events.ts'
 
 export default async function hooksPlugin (app: FastifyInstance): Promise<void> {
-  // Get hook by ID
+  // Get hook by ID — prefer non-disposed hooks (logical delete keeps old rows)
   app.get('/api/v1/apps/:appId/hooks/:hookId', async (request) => {
     const { hookId } = request.params as { hookId: string }
     const appId = request.appId
 
     const result = await app.pg.query(
-      'SELECT * FROM workflow_hooks WHERE correlation_id = $1 AND application_id = $2',
+      `SELECT * FROM workflow_hooks WHERE correlation_id = $1 AND application_id = $2
+       ORDER BY CASE WHEN status = 'disposed' THEN 1 ELSE 0 END, created_at DESC
+       LIMIT 1`,
       [hookId, appId]
     )
 
@@ -17,13 +19,15 @@ export default async function hooksPlugin (app: FastifyInstance): Promise<void> 
     return formatHook(result.rows[0])
   })
 
-  // Get hook by token
+  // Get hook by token — prefer pending, then received, then disposed
   app.get('/api/v1/apps/:appId/hooks/by-token/:token', async (request) => {
     const { token } = request.params as { token: string }
     const appId = request.appId
 
     const result = await app.pg.query(
-      'SELECT * FROM workflow_hooks WHERE token = $1 AND application_id = $2',
+      `SELECT * FROM workflow_hooks WHERE token = $1 AND application_id = $2
+       ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'received' THEN 1 ELSE 2 END, created_at DESC
+       LIMIT 1`,
       [token, appId]
     )
 
@@ -54,7 +58,7 @@ export default async function hooksPlugin (app: FastifyInstance): Promise<void> 
     const result = await app.pg.query(
       `SELECT * FROM workflow_hooks
        WHERE ${conditions.join(' AND ')}
-       ORDER BY created_at DESC
+       ORDER BY created_at ASC
        LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
       params
     )

@@ -45,6 +45,22 @@ export async function dispatchMessage (
       }
     }
 
+    // 425 = step retryAfter not reached yet — extract the retryAfter and
+    // treat as a deferred re-queue instead of a failure (avoids double backoff)
+    if (statusCode === 425) {
+      let delaySecs = 1
+      try {
+        const body = await response.body.json() as { meta?: { retryAfter?: string } }
+        if (body?.meta?.retryAfter) {
+          const retryAt = new Date(body.meta.retryAfter)
+          delaySecs = Math.max(1, Math.ceil((retryAt.getTime() - Date.now()) / 1000))
+        }
+      } catch {
+        await response.body.dump()
+      }
+      return { success: true, timeoutSeconds: delaySecs, statusCode }
+    }
+
     await response.body.dump()
     return { success: false, statusCode }
   } catch {

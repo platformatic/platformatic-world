@@ -169,6 +169,19 @@ export function killPort (port: number) {
   } catch {}
 }
 
+export async function triggerPagesWorkflow (workflowFn: string, args: any[] = []): Promise<string> {
+  const url = new URL('/api/trigger-pages', NEXT_URL)
+  url.searchParams.set('workflowFn', workflowFn)
+  if (args.length > 0) {
+    url.searchParams.set('args', args.map(String).join(','))
+  }
+  const res = await fetch(url, { method: 'POST' })
+  assert.equal(res.status, 200, `trigger-pages ${workflowFn} failed: ${res.status}`)
+  const { runId } = await res.json() as { runId: string }
+  assert.ok(runId, `${workflowFn} should return a runId`)
+  return runId
+}
+
 export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: SpawnedProcess }> {
   // Kill any leftover processes on our ports
   killPort(WF_PORT)

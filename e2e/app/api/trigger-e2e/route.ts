@@ -38,7 +38,16 @@ import {
   Calculator,
   AllInOneService,
   ChainableService,
+  importedStepOnlyWorkflow,
+  pathsAliasWorkflow,
+  crossContextSerdeWorkflow,
+  serverError5xxRetryWorkflow,
+  readableStreamWorkflow,
+  outputStreamWorkflow,
+  outputStreamInsideStepWorkflow,
+  stepFunctionAsStartArgWorkflow,
 } from '@/workflows/e2e'
+import { addTenWorkflow as addTenWorkflowDuplicate } from '@/workflows/98_duplicate_case'
 
 const workflows: Record<string, (...args: any[]) => any> = {
   addTenWorkflow,
@@ -75,9 +84,18 @@ const workflows: Record<string, (...args: any[]) => any> = {
   errorRetrySuccess,
   errorWorkflowCrossFile,
   errorStepCrossFile,
-  calculatorCompute: Calculator.compute,
-  allInOneServiceWorkflow: AllInOneService.workflow,
-  chainableServicePipeline: ChainableService.pipeline,
+  'Calculator.calculate': Calculator.calculate,
+  'AllInOneService.processNumber': AllInOneService.processNumber,
+  'ChainableService.processWithThis': ChainableService.processWithThis,
+  addTenWorkflowDuplicate,
+  importedStepOnlyWorkflow,
+  pathsAliasWorkflow,
+  crossContextSerdeWorkflow,
+  serverError5xxRetryWorkflow,
+  readableStreamWorkflow,
+  outputStreamWorkflow,
+  outputStreamInsideStepWorkflow,
+  stepFunctionAsStartArgWorkflow,
 }
 
 export async function POST (request: Request) {
