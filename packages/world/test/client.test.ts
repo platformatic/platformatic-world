@@ -126,11 +126,10 @@ describe('PlatformaticWorld client', () => {
     assert.ok(result.messageId)
   })
 
-  it('should get encryption key', async () => {
+  it('should return undefined when no encryption key is provisioned', async () => {
     if (!world) return
 
     const key = await world.getEncryptionKeyForRun('some-run-id')
-    assert.ok(key instanceof Uint8Array)
-    assert.equal(key.length, 32)
+    assert.equal(key, undefined)
   })
 })

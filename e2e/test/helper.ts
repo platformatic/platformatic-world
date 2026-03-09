@@ -93,7 +93,7 @@ export async function waitForHookByToken (token: string, timeoutMs = 15_000): Pr
 }
 
 // Lazy-loaded SDK function (require world to be configured first)
-let sdkResumeHook: (tokenOrHook: any, payload: any) => Promise<any>
+let sdkResumeHook: ((tokenOrHook: any, payload: any) => Promise<any>) | undefined
 
 export async function loadSdkHookFunctions (): Promise<void> {
   if (sdkResumeHook) return
