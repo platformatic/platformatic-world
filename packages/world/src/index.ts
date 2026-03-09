@@ -19,6 +19,22 @@ export function createPlatformaticWorld (config: PlatformaticWorldConfig): World
     ...createQueue(client, config),
     ...createStreamer(client),
     getEncryptionKeyForRun: createEncryption(client),
+    async start () {
+      // Register this process as a queue handler with the workflow service.
+      // The test server (world-testing) sets process.env.PORT after listening.
+      const port = process.env.PORT
+      if (!port) return
+      const baseUrl = `http://localhost:${port}`
+      await client.post('/handlers', {
+        podId: process.env.PLT_WORLD_POD_ID || `plt-world-${process.pid}`,
+        deploymentVersion: config.deploymentVersion,
+        endpoints: {
+          workflow: `${baseUrl}/.well-known/workflow/v1/flow`,
+          step: `${baseUrl}/.well-known/workflow/v1/step`,
+          webhook: `${baseUrl}/.well-known/workflow/v1/webhook`,
+        },
+      })
+    },
     async close () {
       await client.close()
     },

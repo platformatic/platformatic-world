@@ -29,6 +29,15 @@ import {
   instanceMethodStepWorkflow,
   hookCleanupTestWorkflow,
   hookDisposeTestWorkflow,
+  errorRetryFatal,
+  hookWithSleepWorkflow,
+  sleepWithSequentialStepsWorkflow,
+  errorRetrySuccess,
+  errorWorkflowCrossFile,
+  errorStepCrossFile,
+  Calculator,
+  AllInOneService,
+  ChainableService,
 } from '@/workflows/e2e'
 
 const workflows: Record<string, (...args: any[]) => any> = {
@@ -60,6 +69,15 @@ const workflows: Record<string, (...args: any[]) => any> = {
   instanceMethodStepWorkflow,
   hookCleanupTestWorkflow,
   hookDisposeTestWorkflow,
+  errorRetryFatal,
+  hookWithSleepWorkflow,
+  sleepWithSequentialStepsWorkflow,
+  errorRetrySuccess,
+  errorWorkflowCrossFile,
+  errorStepCrossFile,
+  calculatorCompute: Calculator.compute,
+  allInOneServiceWorkflow: AllInOneService.workflow,
+  chainableServicePipeline: ChainableService.pipeline,
 }
 
 export async function POST (request: Request) {

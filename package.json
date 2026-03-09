@@ -8,7 +8,8 @@
   "scripts": {
     "test": "pnpm -r --filter='!e2e-test-app' test",
     "lint": "eslint",
-    "test:e2e": "pnpm -C e2e test"
+    "test:e2e": "pnpm -C e2e test",
+    "test:vercel": "pnpm -C e2e test:vercel"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

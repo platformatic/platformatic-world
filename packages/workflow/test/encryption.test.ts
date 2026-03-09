@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { setupTest, teardownTest } from './helper.ts'
@@ -9,6 +10,19 @@ describe('encryption', () => {
 
   before(async () => {
     ctx = await setupTest()
+
+    // Provision an encryption key for this app
+    const secret = randomBytes(32)
+    const appRow = await ctx.app.pg.query(
+      'SELECT id FROM workflow_applications WHERE app_id = $1',
+      [ctx.appId]
+    )
+    await ctx.app.pg.query(
+      `INSERT INTO workflow_encryption_keys (application_id, secret)
+       VALUES ($1, $2)
+       ON CONFLICT (application_id) DO NOTHING`,
+      [appRow.rows[0].id, secret]
+    )
 
     // Create a run
     const response = await ctx.app.inject({

@@ -6,5 +6,7 @@ This product includes code adapted from the Vercel Workflow SDK.
 
 The following files contain code adapted from the Vercel Workflow SDK e2e test suite:
 
-  e2e/workflows/e2e.ts        — workflow definitions
-  e2e/test/workflow.test.ts    — e2e test scenarios
+  e2e/workflows/e2e.ts            — workflow definitions
+  e2e/workflows/helpers.ts        — cross-file error helper functions
+  e2e/test/vercel-e2e.test.ts     — e2e test scenarios
+  e2e/test/helper.ts              — shared test infrastructure

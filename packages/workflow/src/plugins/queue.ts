@@ -41,14 +41,20 @@ export default async function queuePlugin (app: FastifyInstance): Promise<void> 
 
     if (delaySeconds > 0) {
       // Deferred delivery
-      const result = await app.pg.query(
-        `INSERT INTO workflow_queue_messages
-         (idempotency_key, queue_name, run_id, deployment_version, application_id, payload, status, deliver_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'deferred', NOW() + make_interval(secs => $7))
-         RETURNING id`,
-        [body.idempotencyKey || null, body.queueName, runId, deploymentVersion, appId,
-          JSON.stringify(body.message), delaySeconds]
-      )
+      let result
+      try {
+        result = await app.pg.query(
+          `INSERT INTO workflow_queue_messages
+           (idempotency_key, queue_name, run_id, deployment_version, application_id, payload, status, deliver_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'deferred', NOW() + make_interval(secs => $7))
+           RETURNING id`,
+          [body.idempotencyKey || null, body.queueName, runId, deploymentVersion, appId,
+            JSON.stringify(body.message), delaySeconds]
+        )
+      } catch (err: any) {
+        if (err.code === '23505') throw new DuplicateIdempotencyKey(body.idempotencyKey || '')
+        throw err
+      }
 
       const messageId = result.rows[0].id
 
@@ -64,14 +70,20 @@ export default async function queuePlugin (app: FastifyInstance): Promise<void> 
     }
 
     // Immediate delivery — insert and attempt dispatch
-    const insertResult = await app.pg.query(
-      `INSERT INTO workflow_queue_messages
-       (idempotency_key, queue_name, run_id, deployment_version, application_id, payload, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending')
-       RETURNING id`,
-      [body.idempotencyKey || null, body.queueName, runId, deploymentVersion, appId,
-        JSON.stringify(body.message)]
-    )
+    let insertResult
+    try {
+      insertResult = await app.pg.query(
+        `INSERT INTO workflow_queue_messages
+         (idempotency_key, queue_name, run_id, deployment_version, application_id, payload, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+         RETURNING id`,
+        [body.idempotencyKey || null, body.queueName, runId, deploymentVersion, appId,
+          JSON.stringify(body.message)]
+      )
+    } catch (err: any) {
+      if (err.code === '23505') throw new DuplicateIdempotencyKey(body.idempotencyKey || '')
+      throw err
+    }
 
     const messageId = insertResult.rows[0].id
 
