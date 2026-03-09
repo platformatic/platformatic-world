@@ -1,12 +1,10 @@
+import { Readable } from 'node:stream'
 import type { HttpClient } from './client.ts'
 
 export function createStreamer (client: HttpClient) {
   return {
     async writeToStream (name: string, runId: string, chunk: string | Uint8Array): Promise<void> {
-      const data = typeof chunk === 'string'
-        ? chunk
-        : Buffer.from(chunk).toString('base64')
-
+      const data = Buffer.from(chunk).toString('base64')
       await client.put(`/runs/${runId}/streams/${name}`, { data })
     },
 
@@ -29,18 +27,13 @@ export function createStreamer (client: HttpClient) {
     },
 
     async readFromStream (name: string, startIndex?: number): Promise<ReadableStream<Uint8Array>> {
-      const query: Record<string, string | undefined> = {}
-      if (startIndex !== undefined) query.startIndex = String(startIndex)
+      const query: Record<string, string> = { stream: 'true' }
+      if (startIndex !== undefined) {
+        query.startIndex = String(startIndex)
+      }
 
-      const buffer = await client.getRaw(`/streams/${name}`, query)
-
-      // Create a ReadableStream from the buffer
-      return new ReadableStream({
-        start (controller) {
-          controller.enqueue(new Uint8Array(buffer))
-          controller.close()
-        },
-      })
+      const readable = await client.getStream(`/streams/${name}`, query)
+      return Readable.toWeb(readable) as ReadableStream<Uint8Array>
     },
 
     async listStreamsByRunId (runId: string): Promise<string[]> {

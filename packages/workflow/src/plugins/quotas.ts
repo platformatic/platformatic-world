@@ -13,8 +13,8 @@ const queueCounters = new Map<string, { count: number; resetAt: number }>()
 
 const DEFAULT_QUOTAS = {
   maxRuns: 10_000,
-  maxEventsPerRun: 10_000,
-  maxQueuePerMinute: 1_000,
+  maxEventsPerRun: 100_000,
+  maxQueuePerMinute: 100_000,
 }
 
 async function getQuotas (app: FastifyInstance, appId: number): Promise<QuotaCache> {

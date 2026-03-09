@@ -96,7 +96,7 @@ CREATE TABLE workflow_hooks (
   run_id          VARCHAR NOT NULL REFERENCES workflow_runs(id),
   application_id  INTEGER NOT NULL,
   correlation_id  VARCHAR NOT NULL,
-  token           VARCHAR NOT NULL UNIQUE,
+  token           VARCHAR NOT NULL,
   owner_id        VARCHAR NOT NULL DEFAULT '',
   project_id      VARCHAR NOT NULL DEFAULT '',
   environment     VARCHAR NOT NULL DEFAULT '',
@@ -109,6 +109,7 @@ CREATE TABLE workflow_hooks (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE UNIQUE INDEX idx_wh_token_active ON workflow_hooks (token) WHERE status = 'pending';
 CREATE INDEX idx_wh_token ON workflow_hooks (token);
 CREATE INDEX idx_wh_run_id ON workflow_hooks (run_id);
 CREATE INDEX idx_wh_status ON workflow_hooks (application_id, status);

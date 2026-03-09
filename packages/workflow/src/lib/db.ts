@@ -29,8 +29,9 @@ export async function initDb (config: DbConfig): Promise<pg.Pool> {
   return pool
 }
 
-export function decorateDb (app: FastifyInstance, pool: pg.Pool): void {
+export function decorateDb (app: FastifyInstance, pool: pg.Pool, connectionString: string): void {
   app.decorate('pg', pool)
+  app.decorate('pgConnectionString', connectionString)
   app.addHook('onClose', async () => {
     await pool.end()
   })
@@ -39,5 +40,6 @@ export function decorateDb (app: FastifyInstance, pool: pg.Pool): void {
 declare module 'fastify' {
   interface FastifyInstance {
     pg: pg.Pool
+    pgConnectionString: string
   }
 }

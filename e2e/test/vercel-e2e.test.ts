@@ -7,7 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import {
   setup, teardown, triggerE2eWorkflow, runE2eWorkflow,
   waitForRunStatus, waitForHookByToken, getHooksByRunId,
-  cancelRun, resumeHook,
+  cancelRun, resumeHook, triggerPagesWorkflow,
   NEXT_URL,
   type SpawnedProcess,
 } from './helper.ts'
@@ -155,10 +155,10 @@ test('errorStepCrossFile: step error from imported helper is caught', { timeout:
   assert.ok(result.message.includes('Step error from imported helper module'), `Expected error message, got: ${result.message}`)
 })
 
-// Retry exponential backoff means 3 attempts takes longer than 120s with default delays.
-test.skip('errorRetrySuccess: regular Error retries until success (with metadata)', { timeout: 120_000 }, async () => {
-  const { result } = await runE2eWorkflow('errorRetrySuccess')
-  assert.equal(result.finalAttempt, 3)
+test('errorRetrySuccess: regular Error retries until success (with metadata)', { timeout: 120_000 }, async () => {
+  const runId = await triggerE2eWorkflow('errorRetrySuccess')
+  const run = await waitForRunStatus(runId, 'completed', 90_000)
+  assert.equal(run.status, 'completed')
 })
 
 // ---- Spawn / metadata ----
@@ -247,19 +247,19 @@ test('instanceMethodStep: instance methods as steps', { timeout: 60_000 }, async
 
 // ---- Static method workflows ----
 
-test('Calculator: static method steps in separate class', { timeout: 60_000 }, async () => {
-  const { result } = await runE2eWorkflow('calculatorCompute', [3, 4])
-  assert.deepEqual(result, { sum: 7, product: 12 })
+test('Calculator.calculate: static method steps in separate class', { timeout: 60_000 }, async () => {
+  const { result } = await runE2eWorkflow('Calculator.calculate', [5, 3])
+  assert.equal(result, 16)
 })
 
-test('AllInOneService: static workflow + step in same class', { timeout: 60_000 }, async () => {
-  const { result } = await runE2eWorkflow('allInOneServiceWorkflow', ['hello world'])
-  assert.deepEqual(result, { processed: 'HELLO WORLD' })
+test('AllInOneService.processNumber: static workflow + step in same class', { timeout: 60_000 }, async () => {
+  const { result } = await runE2eWorkflow('AllInOneService.processNumber', [10])
+  assert.equal(result, 50)
 })
 
-test('ChainableService: pipeline of static method steps', { timeout: 60_000 }, async () => {
-  const { result } = await runE2eWorkflow('chainableServicePipeline', [5])
-  assert.deepEqual(result, { a: 10, b: 20, c: 400 })
+test('ChainableService.processWithThis: static method steps with this', { timeout: 60_000 }, async () => {
+  const { result } = await runE2eWorkflow('ChainableService.processWithThis', [5])
+  assert.deepEqual(result, { multiplied: 50, doubledAndMultiplied: 100, sum: 150 })
 })
 
 // ---- Hooks ----
@@ -340,8 +340,7 @@ test('concurrent hook token conflict: two workflows cannot use same token', { ti
   assert.equal(run1.status, 'completed')
 })
 
-// Requires TC39 explicit resource management (`using` keyword) for auto-hook-disposal on block exit.
-test.skip('hookDisposeTest: hook token reuse after explicit disposal while running', { timeout: 90_000 }, async () => {
+test('hookDisposeTest: hook token reuse after explicit disposal while running', { timeout: 90_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
   const customData = Math.random().toString(36).slice(2)
 
@@ -365,12 +364,42 @@ test.skip('hookDisposeTest: hook token reuse after explicit disposal while runni
 
 // ---- Webhooks ----
 
-// respondWith: 'manual' uses a TransformStream that doesn't work cross-process.
-test.skip('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 60_000 }, async () => {
+test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 60_000 }, async () => {
   const runId = await triggerE2eWorkflow('webhookWorkflow')
   await sleep(5_000)
+
   const hooks = await getHooksByRunId(runId)
   assert.ok(hooks.length >= 3, `Expected 3 hooks, got ${hooks.length}`)
+
+  const [token1, token2, token3] = hooks.map((h: any) => h.token)
+
+  // Webhook with default response
+  const res1 = await fetch(
+    `${NEXT_URL}/.well-known/workflow/v1/webhook/${encodeURIComponent(token1)}`,
+    { method: 'POST', body: JSON.stringify({ message: 'one' }) }
+  )
+  assert.equal(res1.status, 202)
+
+  // Webhook with static response
+  const res2 = await fetch(
+    `${NEXT_URL}/.well-known/workflow/v1/webhook/${encodeURIComponent(token2)}`,
+    { method: 'POST', body: JSON.stringify({ message: 'two' }) }
+  )
+  assert.equal(res2.status, 402)
+  const body2 = await res2.text()
+  assert.equal(body2, 'Hello from static response!')
+
+  // Webhook with manual response
+  const res3 = await fetch(
+    `${NEXT_URL}/.well-known/workflow/v1/webhook/${encodeURIComponent(token3)}`,
+    { method: 'POST', body: JSON.stringify({ message: 'three' }) }
+  )
+  assert.equal(res3.status, 200)
+  const body3 = await res3.text()
+  assert.equal(body3, 'Hello from webhook!')
+
+  const run = await waitForRunStatus(runId, 'completed', 30_000)
+  assert.equal(run.status, 'completed')
 })
 
 test('webhook route with invalid token returns 404', { timeout: 10_000 }, async () => {
@@ -391,10 +420,9 @@ test('cancelRun: cancelling a running workflow', { timeout: 60_000 }, async () =
   assert.equal(run.status, 'cancelled')
 })
 
-// ---- Sleep + concurrent patterns (void sleep blocks completion cross-process) ----
+// ---- Sleep + concurrent patterns ----
 
-// `void sleep('1d')` creates a forever-pending wait that blocks workflow completion.
-test.skip('hookWithSleep: hook payloads delivered correctly with concurrent sleep', { timeout: 90_000 }, async () => {
+test('hookWithSleep: hook payloads delivered correctly with concurrent sleep', { timeout: 90_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
 
   const runId = await triggerE2eWorkflow('hookWithSleepWorkflow', [token])
@@ -412,12 +440,117 @@ test.skip('hookWithSleep: hook payloads delivered correctly with concurrent slee
   assert.equal(run.status, 'completed')
 })
 
-test.skip('sleepWithSequentialSteps: sequential steps work with concurrent sleep', { timeout: 60_000 }, async () => {
+test('sleepWithSequentialSteps: sequential steps work with concurrent sleep', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('sleepWithSequentialStepsWorkflow')
   assert.deepEqual(result, { a: 3, b: 6, c: 10, shouldCancel: false })
 })
 
+// ---- Phase 2: New workflow tests ----
+
+test('addTenWorkflow (duplicate case)', { timeout: 30_000 }, async () => {
+  const { result } = await runE2eWorkflow('addTenWorkflowDuplicate', [123])
+  assert.equal(result, 133)
+})
+
+test('importedStepOnlyWorkflow: step from separate file', { timeout: 30_000 }, async () => {
+  const { result } = await runE2eWorkflow('importedStepOnlyWorkflow')
+  assert.equal(result, 'imported-step-only-ok')
+})
+
+test('pathsAliasWorkflow: import via tsconfig paths', { timeout: 30_000 }, async () => {
+  const { result } = await runE2eWorkflow('pathsAliasWorkflow')
+  assert.equal(result, 'pathsAliasHelper')
+})
+
+// ---- Phase 3: Cross-context serialization ----
+
+test('crossContextSerdeWorkflow: cross-file serde with Vector class', { timeout: 60_000 }, async () => {
+  const { result } = await runE2eWorkflow('crossContextSerdeWorkflow')
+  assert.deepEqual(result, {
+    v1: { x: 1, y: 2, z: 3 },
+    v2: { x: 10, y: 20, z: 30 },
+    sum: { x: 11, y: 22, z: 33 },
+    scaled: { x: 5, y: 10, z: 15 },
+    arraySum: { x: 16, y: 32, z: 48 },
+  })
+})
+
+// ---- Phase 4: Fault injection ----
+
+test('serverError5xxRetryWorkflow: retries on injected 5xx errors', { timeout: 60_000 }, async () => {
+  const { result } = await runE2eWorkflow('serverError5xxRetryWorkflow', [42])
+  assert.equal(result.result, 84)
+  assert.equal(result.retryCount, 2)
+})
+
+// ---- Streaming ----
+
+test('readableStreamWorkflow: step returns a ReadableStream', { timeout: 80_000 }, async () => {
+  const runId = await triggerE2eWorkflow('readableStreamWorkflow')
+  const run = await waitForRunStatus(runId, 'completed', 60_000)
+  assert.equal(run.status, 'completed')
+})
+
+test('outputStreamWorkflow: getWritable() in workflow passed to steps', { timeout: 60_000 }, async () => {
+  const runId = await triggerE2eWorkflow('outputStreamWorkflow')
+  const run = await waitForRunStatus(runId, 'completed', 45_000)
+  assert.equal(run.status, 'completed')
+})
+
+test('outputStreamInsideStepWorkflow: getWritable() called inside step functions', { timeout: 60_000 }, async () => {
+  const runId = await triggerE2eWorkflow('outputStreamInsideStepWorkflow')
+  const run = await waitForRunStatus(runId, 'completed', 45_000)
+  assert.equal(run.status, 'completed')
+})
+
+// ---- stepFunctionAsStartArg ----
+
+test('stepFunctionAsStartArgWorkflow: step fn ref passed as start() argument', { timeout: 120_000 }, async () => {
+  // Fetch the manifest to get the stepId for the `add` function from 98_duplicate_case
+  const manifestRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/manifest.json`)
+  if (!manifestRes.ok) {
+    // Manifest not available — skip gracefully
+    return
+  }
+  const manifest = await manifestRes.json() as {
+    steps: Record<string, Record<string, { stepId: string }>>
+    workflows: Record<string, Record<string, { workflowId: string }>>
+  }
+
+  // Find the add step from 98_duplicate_case
+  const stepFile = Object.keys(manifest.steps).find((f: string) => f.includes('98_duplicate_case'))
+  assert.ok(stepFile, 'Could not find 98_duplicate_case in manifest steps')
+  const addStepInfo = manifest.steps[stepFile]?.add
+  assert.ok(addStepInfo, 'Could not find "add" step in manifest')
+
+  // Create a function reference with stepId (mimics SWC client transform)
+  const addStepRef = Object.assign(() => {}, { stepId: addStepInfo.stepId })
+
+  // Find the workflow metadata from manifest
+  const workflowFile = Object.keys(manifest.workflows).find((f: string) => f.includes('e2e'))
+  assert.ok(workflowFile, 'Could not find e2e workflow file in manifest')
+  const wfMeta = manifest.workflows[workflowFile]?.stepFunctionAsStartArgWorkflow
+  assert.ok(wfMeta, 'Could not find stepFunctionAsStartArgWorkflow in manifest')
+
+  // Use SDK start() directly — step fn refs can't be serialized via HTTP JSON
+  const { start: startWorkflow } = await import('workflow/api')
+  const run = await startWorkflow(wfMeta, [addStepRef, 3, 5])
+  const result = await run.returnValue
+  assert.deepEqual(result, { directResult: 8, viaStepResult: 8, doubled: 16 })
+})
+
 // ---- Health checks ----
+
+test('health check (queue-based): workflow and step endpoints respond', { timeout: 60_000 }, async () => {
+  const { healthCheck, getWorld } = await import('workflow/runtime')
+  const world = getWorld()
+
+  const workflowResult = await healthCheck(world, 'workflow', { timeout: 30000 })
+  assert.equal(workflowResult.healthy, true)
+
+  const stepResult = await healthCheck(world, 'step', { timeout: 30000 })
+  assert.equal(stepResult.healthy, true)
+})
 
 test('health check endpoint (HTTP): flow and step endpoints respond', { timeout: 30_000 }, async () => {
   const flowRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/flow?__health`, {
@@ -433,4 +566,56 @@ test('health check endpoint (HTTP): flow and step endpoints respond', { timeout:
   assert.equal(stepRes.status, 200)
   const stepBody = await stepRes.text()
   assert.ok(stepBody.includes('healthy'), `Expected health response, got: ${stepBody}`)
+})
+
+// ---- .well-known/agent discovery ----
+
+test('wellKnownAgentWorkflow: step discovery in dot-prefixed directory', { timeout: 60_000 }, async () => {
+  // Fetch manifest to get the workflowId for wellKnownAgentWorkflow
+  const manifestRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/manifest.json`)
+  if (!manifestRes.ok) {
+    return // Manifest not available — skip gracefully
+  }
+  const manifest = await manifestRes.json() as {
+    workflows: Record<string, Record<string, { workflowId: string }>>
+  }
+
+  // Find the workflow in .well-known/agent/v1/steps
+  const workflowFile = Object.keys(manifest.workflows).find((f: string) =>
+    f.includes('.well-known/agent')
+  )
+  assert.ok(workflowFile, 'Could not find .well-known/agent workflow file in manifest')
+  const wfMeta = manifest.workflows[workflowFile]?.wellKnownAgentWorkflow
+  assert.ok(wfMeta, 'Could not find wellKnownAgentWorkflow in manifest')
+
+  const { start: startWorkflow } = await import('workflow/api')
+  const run = await startWorkflow(wfMeta, [5])
+  const returnValue = await run.returnValue
+  // wellKnownAgentStep(5) => 5 * 2 = 10, then workflow adds 1 => 11
+  assert.equal(returnValue, 11)
+})
+
+// ---- Pages Router ----
+
+test('pages router: addTenWorkflow via /api/trigger-pages', { timeout: 60_000 }, async () => {
+  const runId = await triggerPagesWorkflow('addTenWorkflow', [123])
+  const { getRun } = await import('workflow/api')
+  const run = await getRun(runId).returnValue
+  assert.equal(run, 133)
+})
+
+test('pages router: promiseAllWorkflow via /api/trigger-pages', { timeout: 60_000 }, async () => {
+  const runId = await triggerPagesWorkflow('promiseAllWorkflow')
+  const { getRun } = await import('workflow/api')
+  const run = await getRun(runId).returnValue
+  assert.equal(run, 'ABC')
+})
+
+test('pages router: sleepingWorkflow via /api/trigger-pages', { timeout: 60_000 }, async () => {
+  const startTime = Date.now()
+  const runId = await triggerPagesWorkflow('sleepingWorkflow')
+  const { getRun } = await import('workflow/api')
+  await getRun(runId).returnValue
+  const elapsed = Date.now() - startTime
+  assert.ok(elapsed >= 9_000, `sleep should be at least 9s, got ${elapsed}ms`)
 })

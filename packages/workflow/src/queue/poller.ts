@@ -1,6 +1,6 @@
 import pg from 'pg'
 import { routeMessage } from './router.ts'
-import { dispatchMessage } from './dispatcher.ts'
+import { dispatchMessage, type DispatchResult } from './dispatcher.ts'
 import { getRetryDelay, isMaxAttempts } from './retry.ts'
 
 const ORPHAN_CHECK_INTERVAL = 60_000 // 60 seconds
@@ -10,10 +10,31 @@ export function createPoller (pool: pg.Pool) {
   let deferredTimer: ReturnType<typeof setTimeout> | null = null
   let orphanTimer: ReturnType<typeof setInterval> | null = null
   let listenClient: pg.Client | null = null
+  let executing = false
+  let pendingNotify = false
 
   async function execute (): Promise<void> {
     if (stopped) return
 
+    if (executing) {
+      pendingNotify = true
+      return
+    }
+    executing = true
+
+    try {
+      await executeOnce()
+    } finally {
+      executing = false
+      // If a NOTIFY arrived during execution, re-run to pick up new messages
+      if (pendingNotify && !stopped) {
+        pendingNotify = false
+        setImmediate(() => execute())
+      }
+    }
+  }
+
+  async function executeOnce (): Promise<void> {
     const client = await pool.connect()
     try {
       const lockResult = await client.query('SELECT pg_try_advisory_lock(42424242)')
@@ -45,8 +66,28 @@ export function createPoller (pool: pg.Pool) {
            LIMIT 100`
         )
 
-        for (const msg of pending.rows) {
-          await dispatchSingleMessage(client, pool, msg)
+        // Dispatch all messages concurrently (HTTP calls in parallel)
+        // then process results sequentially (DB updates on same client)
+        const dispatchResults = await Promise.all(
+          pending.rows.map(async (msg: any) => {
+            const route = await routeMessage(pool, msg.application_id, msg.deployment_version, msg.queue_name)
+            if (!route) {
+              return { msg, route: null, result: null }
+            }
+            const result = await dispatchMessage(
+              route.url, msg.queue_name, msg.id, msg.payload, msg.attempts
+            )
+            console.log(`[POLLER] dispatched msgId=${msg.id} queue=${msg.queue_name} status=${result.statusCode} timeoutSeconds=${result.timeoutSeconds} success=${result.success}`)
+            return { msg, route, result }
+          })
+        )
+
+        for (const { msg, route, result } of dispatchResults) {
+          if (!route || !result) {
+            await handleNoRoute(client, msg)
+            continue
+          }
+          await handleDispatchResult(client, msg, result)
         }
 
         // 4. Schedule next wake-up based on earliest deferred message
@@ -151,47 +192,47 @@ export function createPoller (pool: pg.Pool) {
     })
   }
 
-  async function dispatchSingleMessage (client: pg.PoolClient, pool: pg.Pool, msg: any): Promise<void> {
-    const route = await routeMessage(pool, msg.application_id, msg.deployment_version, msg.queue_name)
-
-    if (!route) {
-      if (isMaxAttempts(msg.attempts)) {
-        await client.query(
-          `UPDATE workflow_queue_messages SET status = 'dead', updated_at = NOW()
-           WHERE id = $1`,
-          [msg.id]
-        )
-      } else {
-        const delay = getRetryDelay(msg.attempts)
-        await client.query(
-          `UPDATE workflow_queue_messages
-           SET status = 'failed', attempts = attempts + 1,
-               next_retry_at = NOW() + make_interval(secs => $2)
-           WHERE id = $1`,
-          [msg.id, delay / 1000]
-        )
-      }
-      return
+  async function handleNoRoute (client: pg.PoolClient, msg: any): Promise<void> {
+    if (isMaxAttempts(msg.attempts)) {
+      await client.query(
+        `UPDATE workflow_queue_messages SET status = 'dead', updated_at = NOW()
+         WHERE id = $1`,
+        [msg.id]
+      )
+    } else {
+      const delay = getRetryDelay(msg.attempts)
+      await client.query(
+        `UPDATE workflow_queue_messages
+         SET status = 'failed', attempts = attempts + 1,
+             next_retry_at = NOW() + make_interval(secs => $2)
+         WHERE id = $1`,
+        [msg.id, delay / 1000]
+      )
     }
+  }
 
-    const result = await dispatchMessage(
-      route.url,
-      msg.queue_name,
-      msg.id,
-      msg.payload,
-      msg.attempts
-    )
-
+  async function handleDispatchResult (client: pg.PoolClient, msg: any, result: DispatchResult): Promise<void> {
     if (result.success) {
       if (typeof result.timeoutSeconds === 'number' && result.timeoutSeconds > 0) {
+        const delaySecs = result.timeoutSeconds
         await client.query(
           `INSERT INTO workflow_queue_messages
            (queue_name, run_id, deployment_version, application_id, payload, status, deliver_at)
            VALUES ($1, $2, $3, $4, $5, 'deferred', NOW() + make_interval(secs => $6))`,
           [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
-            JSON.stringify(msg.payload), result.timeoutSeconds]
+            JSON.stringify(msg.payload), delaySecs]
         )
         // NOTIFY so executor reschedules its timer
+        await client.query("SELECT pg_notify('deferred_messages', '')")
+      } else if (typeof result.timeoutSeconds === 'number' && result.timeoutSeconds === 0) {
+        // Immediate re-dispatch (e.g. hook conflict) — insert as pending
+        await client.query(
+          `INSERT INTO workflow_queue_messages
+           (queue_name, run_id, deployment_version, application_id, payload, status)
+           VALUES ($1, $2, $3, $4, $5, 'pending')`,
+          [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
+            JSON.stringify(msg.payload)]
+        )
         await client.query("SELECT pg_notify('deferred_messages', '')")
       }
       await client.query(

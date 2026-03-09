@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream'
 import { Pool } from 'undici'
 
 export interface ClientConfig {
@@ -147,6 +148,31 @@ export class HttpClient {
       chunks.push(Buffer.from(chunk))
     }
     return Buffer.concat(chunks)
+  }
+
+  async getStream (path: string, query?: Record<string, string | undefined>): Promise<Readable> {
+    const url = new URL(`http://localhost${this.#baseUrl}${path}`)
+    if (query) {
+      for (const [k, v] of Object.entries(query)) {
+        if (v !== undefined) url.searchParams.set(k, v)
+      }
+    }
+
+    const streamHeaders: Record<string, string> = {}
+    if (this.#apiKey) streamHeaders.authorization = `Bearer ${this.#apiKey}`
+
+    const response = await this.#pool.request({
+      method: 'GET',
+      path: `${url.pathname}${url.search}`,
+      headers: streamHeaders,
+    })
+
+    if (response.statusCode >= 400) {
+      const text = await response.body.text()
+      throw createAPIError(response.statusCode, text)
+    }
+
+    return Readable.from(response.body)
   }
 
   async close (): Promise<void> {
