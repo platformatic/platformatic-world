@@ -7,10 +7,12 @@ import { getRetryDelay, isMaxAttempts } from './retry.ts'
 const ORPHAN_CHECK_INTERVAL = 60_000
 const LEADER_LOCK_ID = 42424242
 const DEFERRED_CHANNEL = 'deferred_messages'
+const SAFETY_POLL_INTERVAL = 5_000
 
 export function createPoller (pool: pg.Pool, log: any) {
   let stopped = false
   let deferredTimer: ReturnType<typeof setTimeout> | null = null
+  let safetyTimer: ReturnType<typeof setInterval> | null = null
   let orphanTimer: ReturnType<typeof setInterval> | null = null
   let executing = false
   let pendingNotify = false
@@ -27,9 +29,15 @@ export function createPoller (pool: pg.Pool, log: any) {
       if (isLeader) {
         execute()
         orphanTimer = setInterval(checkOrphans, ORPHAN_CHECK_INTERVAL)
+        // Safety-net: periodically trigger execute() in case a NOTIFY or deferred
+        // timer is lost due to race conditions (e.g. a slow dispatch in a
+        // Promise.all batch blocking the poller while timers get cleared by
+        // subsequent scheduleNextWakeup calls).
+        safetyTimer = setInterval(() => { execute() }, SAFETY_POLL_INTERVAL)
       } else {
         if (deferredTimer) { clearTimeout(deferredTimer); deferredTimer = null }
         if (orphanTimer) { clearInterval(orphanTimer); orphanTimer = null }
+        if (safetyTimer) { clearInterval(safetyTimer); safetyTimer = null }
       }
     },
   })
@@ -261,6 +269,10 @@ export function createPoller (pool: pg.Pool, log: any) {
       if (orphanTimer) {
         clearInterval(orphanTimer)
         orphanTimer = null
+      }
+      if (safetyTimer) {
+        clearInterval(safetyTimer)
+        safetyTimer = null
       }
       await leader.stop()
     },
