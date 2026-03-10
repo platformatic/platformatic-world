@@ -11,17 +11,6 @@ CREATE TABLE workflow_applications (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE workflow_app_keys (
-  id              SERIAL PRIMARY KEY,
-  application_id  INTEGER NOT NULL REFERENCES workflow_applications(id),
-  key_hash        VARCHAR NOT NULL UNIQUE,
-  key_prefix      VARCHAR NOT NULL,
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  revoked_at      TIMESTAMPTZ
-);
-
-CREATE INDEX idx_wak_hash ON workflow_app_keys (key_hash) WHERE revoked_at IS NULL;
-
 CREATE TABLE workflow_app_k8s_bindings (
   id              SERIAL PRIMARY KEY,
   application_id  INTEGER NOT NULL REFERENCES workflow_applications(id),

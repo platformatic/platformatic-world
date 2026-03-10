@@ -4,7 +4,7 @@ import { Forbidden } from '../lib/errors.ts'
 export default async function drainingPlugin (app: FastifyInstance): Promise<void> {
   // Get version status — called by ICC
   app.get('/api/v1/apps/:appId/versions/:deploymentId/status', async (request) => {
-    if (!request.isMasterKey) throw new Forbidden('master key required')
+    if (!request.isAdmin) throw new Forbidden('admin access required')
 
     const { deploymentId } = request.params as { deploymentId: string }
     const appId = request.appId
@@ -44,7 +44,7 @@ export default async function drainingPlugin (app: FastifyInstance): Promise<voi
 
   // Force-expire a deployment version — called by ICC
   app.post('/api/v1/apps/:appId/versions/:deploymentId/expire', async (request) => {
-    if (!request.isMasterKey) throw new Forbidden('master key required')
+    if (!request.isAdmin) throw new Forbidden('admin access required')
 
     const { deploymentId } = request.params as { deploymentId: string }
     const appId = request.appId

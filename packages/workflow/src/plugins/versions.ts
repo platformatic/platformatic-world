@@ -4,7 +4,7 @@ import { Forbidden, BadRequest } from '../lib/errors.ts'
 export default async function versionsPlugin (app: FastifyInstance): Promise<void> {
   // Version notification — called by ICC
   app.post('/api/v1/versions/notify', async (request) => {
-    if (!request.isMasterKey) throw new Forbidden('master key required')
+    if (!request.isAdmin) throw new Forbidden('admin access required')
 
     const body = request.body as {
       applicationId: string

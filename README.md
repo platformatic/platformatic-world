@@ -17,7 +17,7 @@ graph LR
 
     PodV1 <-->|"HTTP/REST"| WF
     PodV2 <-->|"HTTP/REST"| WF
-    ICC -->|"Master Key"| WF
+    ICC -->|"Admin API"| WF
     WF -->|"SQL"| PG
 
     style WF fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#1e3a5f
@@ -31,7 +31,8 @@ Two packages:
 
 - **`@platformatic/workflow`** (`packages/workflow/`) -- Fastify REST API that owns storage, queue routing, and deployment lifecycle. Multi-tenant with per-app isolation.
 - **`@platformatic/world`** (`packages/world/`) -- Thin HTTP client implementing the `@workflow/world` `World` interface. Drop-in replacement for other world implementations.
-- **`e2e/`** -- Next.js test app + end-to-end test suites (57 Vercel-compatible tests + our own integration tests).
+
+The `e2e/` directory contains a Next.js test app and end-to-end test suites (57 Vercel-compatible tests + our own integration tests).
 
 ## Prerequisites
 
@@ -48,23 +49,11 @@ docker compose up -d
 # Install dependencies
 pnpm install
 
-# Start the workflow service
-WF_MASTER_KEY=my-secret-key node packages/workflow/src/server.ts
+# Start the workflow service (single-tenant mode, no auth)
+node packages/workflow/src/server.ts
 ```
 
-The service starts on `http://localhost:3042` by default.
-
-### Provision an Application
-
-```bash
-# Create an application and get an API key
-curl -X POST http://localhost:3042/api/v1/apps \
-  -H "Authorization: Bearer my-secret-key" \
-  -H "Content-Type: application/json" \
-  -d '{"appId": "my-app"}'
-
-# Response: {"appId": "my-app", "apiKey": "wfk_..."}
-```
+The service starts on `http://localhost:3042` by default. Without K8s, it runs in single-tenant mode — no authentication, one implicit application.
 
 ### Use the World Client
 
@@ -73,8 +62,7 @@ import { createPlatformaticWorld } from '@platformatic/world'
 
 const world = createPlatformaticWorld({
   serviceUrl: 'http://localhost:3042',
-  appId: 'my-app',
-  apiKey: 'wfk_...',
+  appId: 'default',
   deploymentVersion: 'v1',
 })
 
@@ -101,50 +89,36 @@ await world.close()
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://wf:wf@localhost:5433/workflow` | PostgreSQL connection string |
-| `WF_MASTER_KEY` | `dev-master-key` | Master key for admin endpoints |
-| `WF_AUTH_MODE` | `api-key` | Authentication mode: `api-key`, `k8s-token`, or `both` |
+| `DATABASE_URL` | `postgresql://wf:wf@localhost:5434/workflow` | PostgreSQL connection string |
 | `PORT` | `3042` | HTTP listen port |
 | `HOST` | `0.0.0.0` | HTTP listen host |
-| `K8S_API_SERVER` | `https://kubernetes.default.svc` | Kubernetes API server URL (when using k8s-token auth) |
-| `K8S_CA_CERT` | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` | Path to K8s CA certificate |
+| `K8S_API_SERVER` | `https://kubernetes.default.svc` | Kubernetes API server URL (multi-tenant only) |
+| `K8S_CA_CERT` | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` | Path to K8s CA certificate (multi-tenant only) |
+| `K8S_ADMIN_SERVICE_ACCOUNT` | | K8s service account with admin access, format `namespace:name` (e.g. `platformatic:icc`) |
 
 ### World Client
 
 ```typescript
 interface PlatformaticWorldConfig {
   serviceUrl: string        // Workflow Service base URL
-  appId: string             // Application ID (from provisioning)
-  apiKey: string            // API key (from provisioning)
+  appId: string             // Application ID
   deploymentVersion: string // Current deployment version
 }
 ```
 
 ## Authentication
 
-The service supports two authentication modes:
+The service auto-detects its operating mode. If a K8s service account token is present, it starts in **multi-tenant mode** with authentication. Otherwise, it starts in **single-tenant mode** with no auth.
 
-### API Key (default)
+### Single-Tenant Mode (local dev)
 
-Each application gets a unique API key (`wfk_...`) issued during provisioning. Keys are stored as SHA-256 hashes. Pods send the key as `Authorization: Bearer wfk_...` on every request.
+No authentication. A single implicit application is auto-provisioned. Just set `PLT_WORLD_SERVICE_URL` and go.
 
-```bash
-# Rotate an API key (revokes old key immediately)
-curl -X POST http://localhost:3042/api/v1/apps/my-app/keys/rotate \
-  -H "Authorization: Bearer $WF_MASTER_KEY"
-```
+### Multi-Tenant Mode (K8s)
 
-### Kubernetes ServiceAccount Tokens
+Pods authenticate with their projected K8s ServiceAccount tokens. The service validates them via the K8s TokenReview API and maps the ServiceAccount identity to an application.
 
-Pods send projected ServiceAccount tokens. The service validates them via the K8s TokenReview API and maps the ServiceAccount identity to an application.
-
-```bash
-# Create a K8s binding
-curl -X POST http://localhost:3042/api/v1/apps/my-app/k8s-binding \
-  -H "Authorization: Bearer $WF_MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"namespace": "default", "serviceAccount": "my-app-sa"}'
-```
+Admin endpoints (app provisioning, draining, version management) require a K8s identity configured as the admin service account via `K8S_ADMIN_SERVICE_ACCOUNT` (e.g. `platformatic:icc`).
 
 ### Multi-Tenant Isolation
 
@@ -222,12 +196,11 @@ Supports `delaySeconds` for deferred delivery and `idempotencyKey` for deduplica
 | `GET` | `/dead-letters` | List dead-lettered messages |
 | `POST` | `/dead-letters/:messageId/retry` | Retry a dead-lettered message |
 
-### Admin Endpoints (master key required)
+### Admin Endpoints (admin access required)
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/apps` | Provision application + issue API key |
-| `POST` | `/api/v1/apps/:appId/keys/rotate` | Rotate API key |
+| `POST` | `/api/v1/apps` | Provision application |
 | `POST` | `/api/v1/apps/:appId/k8s-binding` | Create K8s ServiceAccount binding |
 | `DELETE` | `/api/v1/apps/:appId/k8s-binding` | Remove K8s binding |
 | `GET` | `/api/v1/apps/:appId/versions/:deploymentId/status` | Get version draining status |
@@ -302,7 +275,7 @@ docker compose up -d
 # Install dependencies
 pnpm install
 
-# Run all unit/integration tests (71 workflow + 10 world)
+# Run all unit/integration tests (65 workflow + 5 world)
 pnpm test
 
 # Run Vercel-compatible e2e tests (57 tests — requires PostgreSQL on port 5434)
@@ -325,9 +298,7 @@ packages/
         errors.ts             # Typed HTTP errors (@fastify/error)
         auth/
           index.ts            # Auth plugin (onRequest hook)
-          api-key.ts          # API key validation
           k8s-token.ts        # K8s ServiceAccount token validation
-          master-key.ts       # Master key comparison
       plugins/
         apps.ts               # App provisioning
         events.ts             # Event creation (main write path)
@@ -353,7 +324,7 @@ packages/
         001.do.sql            # Core schema
         002.do.sql            # Hook status columns
         003.do.sql            # Quotas table
-    test/                     # 71 tests across 16 suites
+    test/                     # 65 tests across 16 suites
 
   world/
     src/

@@ -10,7 +10,6 @@ import { SERVICE_URL, provisionApp } from './helper.ts'
 describe('PlatformaticWorld client', () => {
   let world: ReturnType<typeof createPlatformaticWorld>
   let appId: string
-  let apiKey: string
 
   before(async () => {
     // Check if service is running
@@ -25,12 +24,10 @@ describe('PlatformaticWorld client', () => {
 
     const app = await provisionApp()
     appId = app.appId
-    apiKey = app.apiKey
 
     world = createPlatformaticWorld({
       serviceUrl: SERVICE_URL,
       appId,
-      apiKey,
       deploymentVersion: 'v1.0.0',
     })
   })

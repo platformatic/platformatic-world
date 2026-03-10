@@ -80,19 +80,12 @@ test('defaults deploymentVersion to local', async () => {
   }
 })
 
-test('apiKey is optional', async () => {
-  const originalKey = process.env.PLT_WORLD_API_KEY
-  delete process.env.PLT_WORLD_API_KEY
-
-  try {
-    const world = createWorld({
-      serviceUrl: 'http://localhost:9999',
-      appId: 'no-key-app',
-      deploymentVersion: 'local',
-    })
-    assert.equal(typeof world.queue, 'function')
-    await world.close()
-  } finally {
-    if (originalKey) process.env.PLT_WORLD_API_KEY = originalKey
-  }
+test('works without optional fields', async () => {
+  const world = createWorld({
+    serviceUrl: 'http://localhost:9999',
+    appId: 'minimal-app',
+    deploymentVersion: 'local',
+  })
+  assert.equal(typeof world.queue, 'function')
+  await world.close()
 })
