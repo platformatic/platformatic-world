@@ -5,7 +5,7 @@
     "port": "{PORT}"
   },
   "runtime": {
-    "metrics": "{PLT_METRICS_ENABLED}"
+    "metrics": true
   },
   "plugins": {
     "paths": ["./plugins"]
