@@ -17,5 +17,6 @@ EXPOSE 3042
 
 ENV PORT=3042
 ENV HOST=0.0.0.0
+ENV PLT_METRICS_ENABLED=true
 
 CMD ["npx", "wattpm", "start"]

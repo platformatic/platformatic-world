@@ -63,7 +63,7 @@ jobs:
 
       - name: Start workflow service
         run: |
-          PORT=3042 npx wattpm start &
+          PORT=3042 PLT_METRICS_ENABLED=true npx wattpm start &
           for i in $(seq 1 30); do
             if curl -sf http://localhost:9090/ready > /dev/null 2>&1; then
               echo "Service is ready"
