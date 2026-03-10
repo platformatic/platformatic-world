@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schemas.platformatic.dev/@platformatic/node/3.40.0.json",
+  "node": {
+    "main": "src/server.ts"
+  },
+  "server": {
+    "hostname": "{HOST}",
+    "port": "{PORT}"
+  }
+}

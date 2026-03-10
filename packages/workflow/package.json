@@ -7,12 +7,15 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "start": "node src/server.ts",
+    "start": "wattpm start",
+    "dev": "wattpm dev",
     "test": "node --test --test-concurrency=1 test/*.test.ts",
     "lint": "eslint"
   },
   "dependencies": {
     "@fastify/error": "^4.1.0",
+    "@platformatic/node": "^3.40.0",
+    "wattpm": "^3.40.0",
     "fastify": "^5.3.3",
     "pg": "^8.16.0",
     "postgrator": "^8.0.0",

@@ -63,7 +63,7 @@ jobs:
 
       - name: Start workflow service
         run: |
-          node packages/workflow/src/server.ts &
+          npx wattpm start &
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3042/status > /dev/null 2>&1; then
               echo "Service is ready"
@@ -73,6 +73,7 @@ jobs:
           done
           echo "Service failed to start"
           exit 1
+        working-directory: packages/workflow
 
       - name: Run world integration tests
         run: node --test packages/world/test/client.test.ts
@@ -126,3 +127,35 @@ jobs:
         timeout-minutes: 10
         env:
           DATABASE_URL: postgresql://wf:wf@localhost:5434/workflow
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [lint, test, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from package.json
+        id: version
+        run: echo "version=$(node -p "require('./packages/workflow/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: packages/workflow
+          push: true
+          tags: |
+            ghcr.io/platformatic/workflow:${{ steps.version.outputs.version }}
+            ghcr.io/platformatic/workflow:latest

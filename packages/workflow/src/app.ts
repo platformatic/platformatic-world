@@ -28,7 +28,10 @@ export interface AppConfig {
 }
 
 export async function buildApp (config: AppConfig): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true })
+  const app = Fastify({
+    loggerInstance: globalThis.platformatic?.logger,
+    logger: !globalThis.platformatic?.logger,
+  })
 
   // Database
   const pool = await initDb({ connectionString: config.connectionString })
