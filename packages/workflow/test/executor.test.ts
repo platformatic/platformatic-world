@@ -58,7 +58,7 @@ test('NOTIFY wakes up deferred message processing', async () => {
     ['test-queue', '', '', appNumericId, JSON.stringify({ test: true })]
   )
 
-  await app.pg.query("SELECT pg_notify('deferred_messages', '')")
+  await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
 
   const client = new pg.Client({ connectionString: CONNECTION_STRING })
   await client.connect()
@@ -80,7 +80,7 @@ test('NOTIFY wakes up deferred message processing', async () => {
        VALUES ($1, $2, $3, $4, $5, 'deferred', NOW() + make_interval(secs => 1))`,
       ['test-queue-2', '', '', appNumericId, JSON.stringify({ test: 2 })]
     )
-    await app.pg.query("SELECT pg_notify('deferred_messages', '')")
+    await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
 
     const notification = await notificationPromise
     assert.equal(notification.channel, 'deferred_messages')

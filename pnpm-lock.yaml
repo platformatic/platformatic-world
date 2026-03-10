@@ -57,6 +57,9 @@ importers:
       '@fastify/error':
         specifier: ^4.1.0
         version: 4.2.0
+      '@platformatic/leader':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@platformatic/service':
         specifier: ^3.40.0
         version: 3.40.0(typescript@5.9.3)
@@ -1217,6 +1220,10 @@ packages:
   '@platformatic/itc@3.40.0':
     resolution: {integrity: sha512-7RpEDWvZM5a6+z8C1drUSIOHN6B8Kx77RD3QWPuALoFuG/7jAHBBx3dlyX5mhBNxwlVAP6r+jewM2i7yyGbBOA==}
     engines: {node: '>=22.19.0'}
+
+  '@platformatic/leader@0.1.0':
+    resolution: {integrity: sha512-NMUokjRWLxxjJM1p5szbSUm1JTZBwdiHGWGUNW0frUi68x7CbYBFrsqQZNV1ElA7XyVY2eXmEJMWeMLhmI3Mjw==}
+    engines: {node: '>=22.0.0'}
 
   '@platformatic/metrics@3.40.0':
     resolution: {integrity: sha512-CIScLdjPcVj0rPKN3BqNZcE+GXa9dLQOElbqYKdVGgNWeBH6AqIcgpBdrhWvX0Js9W2wQ2qDI0ZFcu5mjKqdDw==}
@@ -5912,6 +5919,13 @@ snapshots:
     dependencies:
       '@fastify/error': 4.2.0
       '@watchable/unpromise': 1.0.2
+
+  '@platformatic/leader@0.1.0':
+    dependencies:
+      pg: 8.20.0
+      pino: 10.3.1
+    transitivePeerDependencies:
+      - pg-native
 
   '@platformatic/metrics@3.40.0':
     dependencies:
