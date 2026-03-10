@@ -19,8 +19,8 @@ declare module 'fastify' {
   }
 }
 
-// Paths that skip auth entirely
-const PUBLIC_PATHS = new Set(['/ready', '/status', '/metrics'])
+// Paths that skip auth entirely (health/metrics are on the Watt metrics port)
+const PUBLIC_PATHS = new Set<string>()
 
 // Paths that require admin access (not app-level auth)
 function isAdminPath (url: string): boolean {

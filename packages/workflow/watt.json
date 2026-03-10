@@ -1,10 +1,13 @@
 {
-  "$schema": "https://schemas.platformatic.dev/@platformatic/node/3.40.0.json",
-  "node": {
-    "main": "src/server.ts"
-  },
+  "$schema": "https://schemas.platformatic.dev/@platformatic/service/3.40.0.json",
   "server": {
     "hostname": "{HOST}",
     "port": "{PORT}"
+  },
+  "runtime": {
+    "metrics": true
+  },
+  "plugins": {
+    "paths": ["./plugins"]
   }
 }

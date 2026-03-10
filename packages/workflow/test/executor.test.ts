@@ -1,9 +1,13 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import Fastify from 'fastify'
+import autoload from '@fastify/autoload'
 import pg from 'pg'
-import { buildApp } from '../src/app.ts'
 import type { FastifyInstance } from 'fastify'
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const CONNECTION_STRING = process.env.DATABASE_URL || 'postgresql://wf:wf@localhost:5434/workflow'
 
 let app: FastifyInstance
@@ -13,12 +17,12 @@ let appNumericId: number
 before(async () => {
   appId = 'executor-test-app'
 
-  app = await buildApp({
-    connectionString: CONNECTION_STRING,
-    singleTenant: true,
-    defaultAppId: appId,
-    enablePoller: false,
-  })
+  process.env.DATABASE_URL = CONNECTION_STRING
+  process.env.PLT_WORLD_APP_ID = appId
+  process.env.WF_ENABLE_POLLER = 'false'
+
+  app = Fastify({ logger: false })
+  await app.register(autoload, { dir: join(__dirname, '..', 'plugins') })
   await app.ready()
 
   const result = await app.pg.query(

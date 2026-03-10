@@ -13,8 +13,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@fastify/autoload": "^6.0.3",
     "@fastify/error": "^4.1.0",
-    "@platformatic/node": "^3.40.0",
+    "@platformatic/service": "^3.40.0",
+    "fastify-plugin": "^5.1.0",
     "wattpm": "^3.40.0",
     "fastify": "^5.3.3",
     "pg": "^8.16.0",

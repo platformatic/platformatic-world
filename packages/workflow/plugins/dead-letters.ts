@@ -1,7 +1,8 @@
+import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { BadRequest } from '../lib/errors.ts'
 
-export default async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
+async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
   // List dead-lettered messages
   app.get('/api/v1/apps/:appId/dead-letters', async (request) => {
     const appId = request.appId
@@ -69,3 +70,5 @@ export default async function deadLettersPlugin (app: FastifyInstance): Promise<
     return { retried: true, messageId: `msg_${numericId}` }
   })
 }
+
+export default fp(deadLettersPlugin, { name: 'dead-letters', dependencies: ['auth'] })

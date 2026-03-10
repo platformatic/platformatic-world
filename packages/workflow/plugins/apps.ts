@@ -1,7 +1,8 @@
+import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { AppNotFound, Forbidden, BadRequest } from '../lib/errors.ts'
 
-export default async function appsPlugin (app: FastifyInstance): Promise<void> {
+async function appsPlugin (app: FastifyInstance): Promise<void> {
   // Create application
   app.post('/api/v1/apps', async (request, reply) => {
     if (!request.isAdmin) throw new Forbidden('admin access required')
@@ -75,3 +76,5 @@ export default async function appsPlugin (app: FastifyInstance): Promise<void> {
     return { deleted: true }
   })
 }
+
+export default fp(appsPlugin, { name: 'apps', dependencies: ['auth'] })

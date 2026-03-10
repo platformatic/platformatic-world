@@ -8,7 +8,10 @@ COPY package.json ./
 RUN pnpm install --prod
 
 COPY watt.json ./
-COPY src/ ./src/
+COPY plugins/ ./plugins/
+COPY lib/ ./lib/
+COPY queue/ ./queue/
+COPY migrations/ ./migrations/
 
 EXPOSE 3042
 
