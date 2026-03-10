@@ -9,7 +9,6 @@ const ROOT = join(__dirname, '..')
 const WORKFLOW_ROOT = join(ROOT, '..', 'packages', 'workflow')
 
 export const WF_PORT = 23_042
-export const WF_METRICS_PORT = 9090
 export const NEXT_PORT = 23_456
 export const WF_URL = `http://localhost:${WF_PORT}`
 export const NEXT_URL = `http://localhost:${NEXT_PORT}`
@@ -195,7 +194,7 @@ export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: Sp
     PORT: String(WF_PORT),
   }, WORKFLOW_ROOT)
 
-  await waitForReady(`http://localhost:${WF_METRICS_PORT}/ready`)
+  await waitForReady(`${WF_URL}/api/v1/apps/default/runs`)
 
   // 2. Clean up stale data from any previous test runs
   const { default: pg } = await import('pg')

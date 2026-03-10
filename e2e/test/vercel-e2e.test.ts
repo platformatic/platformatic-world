@@ -116,7 +116,7 @@ test('errorRetryFatal: FatalError fails immediately without retries', { timeout:
   assert.equal(run.status, 'failed')
 })
 
-test('errorRetryCustomDelay: RetryableError respects retryAfter', { timeout: 180_000 }, async () => {
+test('errorRetryCustomDelay: RetryableError respects retryAfter', { timeout: 120_000 }, async () => {
   const startTime = Date.now()
   const runId = await triggerE2eWorkflow('errorRetryCustomDelay')
   const run = await waitForRunStatus(runId, 'completed', 90_000)
@@ -155,9 +155,9 @@ test('errorStepCrossFile: step error from imported helper is caught', { timeout:
   assert.ok(result.message.includes('Step error from imported helper module'), `Expected error message, got: ${result.message}`)
 })
 
-test('errorRetrySuccess: regular Error retries until success (with metadata)', { timeout: 180_000 }, async () => {
+test('errorRetrySuccess: regular Error retries until success (with metadata)', { timeout: 120_000 }, async () => {
   const runId = await triggerE2eWorkflow('errorRetrySuccess')
-  const run = await waitForRunStatus(runId, 'completed', 150_000)
+  const run = await waitForRunStatus(runId, 'completed', 90_000)
   assert.equal(run.status, 'completed')
 })
 
@@ -364,7 +364,7 @@ test('hookDisposeTest: hook token reuse after explicit disposal while running', 
 
 // ---- Webhooks ----
 
-test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 120_000 }, async () => {
+test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 60_000 }, async () => {
   const runId = await triggerE2eWorkflow('webhookWorkflow')
   await sleep(5_000)
 
