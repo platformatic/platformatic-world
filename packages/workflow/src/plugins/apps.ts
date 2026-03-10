@@ -1,88 +1,27 @@
-import { randomBytes } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
-import { hashApiKey } from '../lib/auth/api-key.ts'
 import { AppNotFound, Forbidden, BadRequest } from '../lib/errors.ts'
 
 export default async function appsPlugin (app: FastifyInstance): Promise<void> {
-  // Create application + issue first API key
+  // Create application
   app.post('/api/v1/apps', async (request, reply) => {
     if (!request.isAdmin) throw new Forbidden('admin access required')
 
     const { appId } = request.body as { appId: string }
     if (!appId) throw new BadRequest('appId is required')
 
-    const apiKey = `wfk_${randomBytes(32).toString('hex')}`
-    const keyHash = hashApiKey(apiKey)
-    const keyPrefix = apiKey.slice(0, 12)
-
-    const client = await app.pg.connect()
     try {
-      await client.query('BEGIN')
-      const result = await client.query(
-        'INSERT INTO workflow_applications (app_id) VALUES ($1) RETURNING id',
+      await app.pg.query(
+        'INSERT INTO workflow_applications (app_id) VALUES ($1)',
         [appId]
       )
-      const applicationId = result.rows[0].id
-      await client.query(
-        `INSERT INTO workflow_app_keys (application_id, key_hash, key_prefix)
-         VALUES ($1, $2, $3)`,
-        [applicationId, keyHash, keyPrefix]
-      )
-      await client.query('COMMIT')
 
       reply.code(201)
-      return { appId, apiKey }
+      return { appId }
     } catch (err: any) {
-      await client.query('ROLLBACK')
       if (err.code === '23505') {
         throw new BadRequest(`application ${appId} already exists`)
       }
       throw err
-    } finally {
-      client.release()
-    }
-  })
-
-  // Rotate API key
-  app.post('/api/v1/apps/:appId/keys/rotate', async (request) => {
-    if (!request.isAdmin) throw new Forbidden('admin access required')
-
-    const { appId } = request.params as { appId: string }
-
-    const appResult = await app.pg.query(
-      'SELECT id FROM workflow_applications WHERE app_id = $1',
-      [appId]
-    )
-    if (appResult.rows.length === 0) throw new AppNotFound(appId)
-    const applicationId = appResult.rows[0].id
-
-    const newKey = `wfk_${randomBytes(32).toString('hex')}`
-    const keyHash = hashApiKey(newKey)
-    const keyPrefix = newKey.slice(0, 12)
-
-    const client = await app.pg.connect()
-    try {
-      await client.query('BEGIN')
-      // Revoke all existing keys
-      await client.query(
-        `UPDATE workflow_app_keys SET revoked_at = NOW()
-         WHERE application_id = $1 AND revoked_at IS NULL`,
-        [applicationId]
-      )
-      // Issue new key
-      await client.query(
-        `INSERT INTO workflow_app_keys (application_id, key_hash, key_prefix)
-         VALUES ($1, $2, $3)`,
-        [applicationId, keyHash, keyPrefix]
-      )
-      await client.query('COMMIT')
-
-      return { appId, apiKey: newKey }
-    } catch (err) {
-      await client.query('ROLLBACK')
-      throw err
-    } finally {
-      client.release()
     }
   })
 

@@ -1,10 +1,9 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
-import { createApiKeyValidator } from './api-key.ts'
 import { createK8sTokenValidator } from './k8s-token.ts'
 import { Unauthorized, Forbidden } from '../errors.ts'
 
 export interface AuthConfig {
-  mode: 'api-key' | 'k8s-token' | 'both' | 'none'
+  mode: 'k8s-token' | 'none'
   defaultAppId?: number
   k8s?: {
     apiServer: string
@@ -26,7 +25,6 @@ const PUBLIC_PATHS = new Set(['/ready', '/status', '/metrics'])
 // Paths that require admin access (not app-level auth)
 function isAdminPath (url: string): boolean {
   return (url.startsWith('/api/v1/apps') && (
-    url.endsWith('/keys/rotate') ||
     url.endsWith('/k8s-binding') ||
     url.match(/^\/api\/v1\/apps\/?$/) !== null
   )) || url.startsWith('/api/v1/versions/')
@@ -45,7 +43,6 @@ async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<vo
     return
   }
 
-  const validateApiKey = createApiKeyValidator(app.pg)
   const validateK8s = config.k8s
     ? createK8sTokenValidator(app.pg, config.k8s)
     : null
@@ -62,27 +59,19 @@ async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<vo
 
     const token = authHeader.slice(7)
 
-    // Try API key validation
     let applicationId: number | null = null
 
-    if (config.mode === 'api-key' || config.mode === 'both') {
-      applicationId = await validateApiKey(token)
-    }
-
-    if (applicationId === null && (config.mode === 'k8s-token' || config.mode === 'both')) {
-      if (validateK8s) {
-        const k8sResult = await validateK8s(token)
-        if (k8sResult) {
-          applicationId = k8sResult.applicationId
-          if (k8sResult.isAdmin) {
-            request.isAdmin = true
-          }
+    if (validateK8s) {
+      const k8sResult = await validateK8s(token)
+      if (k8sResult) {
+        applicationId = k8sResult.applicationId
+        if (k8sResult.isAdmin) {
+          request.isAdmin = true
         }
       }
     }
 
     if (applicationId === null && !request.isAdmin) {
-      // Admin K8s identity may not have an app binding — resolve appId from URL
       if (isAdminPath(url)) {
         throw new Forbidden('admin access required')
       }

@@ -90,11 +90,10 @@ await world.close()
 | Environment Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://wf:wf@localhost:5434/workflow` | PostgreSQL connection string |
-| `WF_AUTH_MODE` | `k8s-token` | Authentication mode: `api-key`, `k8s-token`, or `both` (multi-tenant only) |
 | `PORT` | `3042` | HTTP listen port |
 | `HOST` | `0.0.0.0` | HTTP listen host |
-| `K8S_API_SERVER` | `https://kubernetes.default.svc` | Kubernetes API server URL (when using k8s-token auth) |
-| `K8S_CA_CERT` | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` | Path to K8s CA certificate |
+| `K8S_API_SERVER` | `https://kubernetes.default.svc` | Kubernetes API server URL (multi-tenant only) |
+| `K8S_CA_CERT` | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` | Path to K8s CA certificate (multi-tenant only) |
 | `K8S_ADMIN_SERVICE_ACCOUNT` | | K8s service account with admin access, format `namespace:name` (e.g. `platformatic:icc`) |
 
 ### World Client
@@ -103,7 +102,6 @@ await world.close()
 interface PlatformaticWorldConfig {
   serviceUrl: string        // Workflow Service base URL
   appId: string             // Application ID
-  apiKey?: string           // API key (optional, for api-key auth mode)
   deploymentVersion: string // Current deployment version
 }
 ```
@@ -202,8 +200,7 @@ Supports `delaySeconds` for deferred delivery and `idempotencyKey` for deduplica
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/v1/apps` | Provision application + issue API key |
-| `POST` | `/api/v1/apps/:appId/keys/rotate` | Rotate API key |
+| `POST` | `/api/v1/apps` | Provision application |
 | `POST` | `/api/v1/apps/:appId/k8s-binding` | Create K8s ServiceAccount binding |
 | `DELETE` | `/api/v1/apps/:appId/k8s-binding` | Remove K8s binding |
 | `GET` | `/api/v1/apps/:appId/versions/:deploymentId/status` | Get version draining status |
@@ -278,7 +275,7 @@ docker compose up -d
 # Install dependencies
 pnpm install
 
-# Run all unit/integration tests (68 workflow + 5 world)
+# Run all unit/integration tests (65 workflow + 5 world)
 pnpm test
 
 # Run Vercel-compatible e2e tests (57 tests — requires PostgreSQL on port 5434)
@@ -301,7 +298,6 @@ packages/
         errors.ts             # Typed HTTP errors (@fastify/error)
         auth/
           index.ts            # Auth plugin (onRequest hook)
-          api-key.ts          # API key validation
           k8s-token.ts        # K8s ServiceAccount token validation
       plugins/
         apps.ts               # App provisioning
@@ -328,7 +324,7 @@ packages/
         001.do.sql            # Core schema
         002.do.sql            # Hook status columns
         003.do.sql            # Quotas table
-    test/                     # 71 tests across 16 suites
+    test/                     # 65 tests across 16 suites
 
   world/
     src/

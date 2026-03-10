@@ -31,7 +31,6 @@ after(async () => {
     await app.pg.query('DELETE FROM workflow_deployment_versions WHERE application_id = $1', [id])
     await app.pg.query('DELETE FROM workflow_queue_handlers WHERE application_id = $1', [id])
     await app.pg.query('DELETE FROM workflow_app_quotas WHERE application_id = $1', [id])
-    await app.pg.query('DELETE FROM workflow_app_keys WHERE application_id = $1', [id])
     await app.pg.query('DELETE FROM workflow_applications WHERE id = $1', [id])
   }
   await app.close()

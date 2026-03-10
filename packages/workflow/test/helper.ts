@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { buildApp } from '../src/app.ts'
 
@@ -7,7 +7,6 @@ const BASE_CONNECTION_STRING = process.env.DATABASE_URL || 'postgresql://wf:wf@l
 export interface TestContext {
   app: FastifyInstance
   appId: string
-  apiKey: string
 }
 
 export async function setupTest (): Promise<TestContext> {
@@ -22,28 +21,9 @@ export async function setupTest (): Promise<TestContext> {
 
   await app.ready()
 
-  // Get the auto-provisioned app's numeric ID
-  const appResult = await app.pg.query(
-    'SELECT id FROM workflow_applications WHERE app_id = $1',
-    [appIdStr]
-  )
-  const applicationId = appResult.rows[0].id
-
-  // Create an API key for tests that need one
-  const apiKey = `wfk_${randomBytes(32).toString('hex')}`
-  const keyHash = createHash('sha256').update(apiKey).digest('hex')
-  const keyPrefix = apiKey.slice(0, 12)
-
-  await app.pg.query(
-    `INSERT INTO workflow_app_keys (application_id, key_hash, key_prefix)
-     VALUES ($1, $2, $3)`,
-    [applicationId, keyHash, keyPrefix]
-  )
-
   return {
     app,
     appId: appIdStr,
-    apiKey,
   }
 }
 
@@ -67,7 +47,6 @@ export async function teardownTest (ctx: TestContext): Promise<void> {
     await ctx.app.pg.query('DELETE FROM workflow_encryption_keys WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_deployment_versions WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_app_quotas WHERE application_id = $1', [applicationId])
-    await ctx.app.pg.query('DELETE FROM workflow_app_keys WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_app_k8s_bindings WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_applications WHERE id = $1', [applicationId])
   }

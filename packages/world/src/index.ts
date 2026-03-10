@@ -44,7 +44,6 @@ export function createPlatformaticWorld (config: PlatformaticWorldConfig): World
 export interface CreateWorldOptions {
   serviceUrl: string
   appId: string
-  apiKey?: string
   deploymentVersion: string
 }
 
@@ -65,9 +64,8 @@ export function createWorld (options?: Partial<CreateWorldOptions>): World {
 
   const appId = options?.appId || process.env.PLT_WORLD_APP_ID || readAppName()
   const deploymentVersion = options?.deploymentVersion || process.env.PLT_WORLD_DEPLOYMENT_VERSION || 'local'
-  const apiKey = options?.apiKey || process.env.PLT_WORLD_API_KEY || undefined
 
-  return createPlatformaticWorld({ serviceUrl, appId, apiKey, deploymentVersion })
+  return createPlatformaticWorld({ serviceUrl, appId, deploymentVersion })
 }
 
 export { HttpClient } from './lib/client.ts'

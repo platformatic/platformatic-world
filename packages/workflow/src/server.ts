@@ -9,19 +9,15 @@ let appConfig: AppConfig
 
 if (isK8s) {
   // Multi-tenant mode (K8s)
-  const authMode = (process.env.WF_AUTH_MODE || 'k8s-token') as 'api-key' | 'k8s-token' | 'both'
-
   appConfig = {
     connectionString,
     auth: {
-      mode: authMode,
-      k8s: authMode !== 'api-key'
-        ? {
-            apiServer: process.env.K8S_API_SERVER || 'https://kubernetes.default.svc',
-            caCert: process.env.K8S_CA_CERT || '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt',
-            adminServiceAccount: process.env.K8S_ADMIN_SERVICE_ACCOUNT,
-          }
-        : undefined,
+      mode: 'k8s-token',
+      k8s: {
+        apiServer: process.env.K8S_API_SERVER || 'https://kubernetes.default.svc',
+        caCert: process.env.K8S_CA_CERT || '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt',
+        adminServiceAccount: process.env.K8S_ADMIN_SERVICE_ACCOUNT,
+      },
     },
     enablePoller: true,
   }

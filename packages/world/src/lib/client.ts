@@ -4,7 +4,6 @@ import { Pool } from 'undici'
 export interface ClientConfig {
   serviceUrl: string
   appId: string
-  apiKey?: string
 }
 
 function createAPIError (statusCode: number, text: string): Error {
@@ -30,13 +29,11 @@ export class HttpClient {
   #pool: Pool
   #baseUrl: string
   #appId: string
-  #apiKey: string | undefined
 
   constructor (config: ClientConfig) {
     this.#pool = new Pool(config.serviceUrl)
     this.#baseUrl = `/api/v1/apps/${config.appId}`
     this.#appId = config.appId
-    this.#apiKey = config.apiKey
   }
 
   async post (path: string, body: unknown, query?: Record<string, string | undefined>): Promise<any> {
@@ -50,7 +47,6 @@ export class HttpClient {
     }
 
     const headers: Record<string, string> = { 'content-type': 'application/json' }
-    if (this.#apiKey) headers.authorization = `Bearer ${this.#apiKey}`
 
     const response = await this.#pool.request({
       method: 'POST',
@@ -80,13 +76,9 @@ export class HttpClient {
       }
     }
 
-    const getHeaders: Record<string, string> = {}
-    if (this.#apiKey) getHeaders.authorization = `Bearer ${this.#apiKey}`
-
     const response = await this.#pool.request({
       method: 'GET',
       path: `${url.pathname}${url.search}`,
-      headers: getHeaders,
     })
 
     if (response.statusCode >= 400) {
@@ -99,7 +91,6 @@ export class HttpClient {
 
   async put (path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<any> {
     const putHeaders: Record<string, string> = { 'content-type': 'application/json', ...extraHeaders }
-    if (this.#apiKey) putHeaders.authorization = `Bearer ${this.#apiKey}`
 
     const response = await this.#pool.request({
       method: 'PUT',
@@ -129,13 +120,9 @@ export class HttpClient {
       }
     }
 
-    const rawHeaders: Record<string, string> = {}
-    if (this.#apiKey) rawHeaders.authorization = `Bearer ${this.#apiKey}`
-
     const response = await this.#pool.request({
       method: 'GET',
       path: `${url.pathname}${url.search}`,
-      headers: rawHeaders,
     })
 
     if (response.statusCode >= 400) {
@@ -158,13 +145,9 @@ export class HttpClient {
       }
     }
 
-    const streamHeaders: Record<string, string> = {}
-    if (this.#apiKey) streamHeaders.authorization = `Bearer ${this.#apiKey}`
-
     const response = await this.#pool.request({
       method: 'GET',
       path: `${url.pathname}${url.search}`,
-      headers: streamHeaders,
     })
 
     if (response.statusCode >= 400) {
