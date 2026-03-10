@@ -104,8 +104,8 @@ export function createPoller (pool: pg.Pool, log: any) {
         await handleDispatchResult(client, msg, result)
       }
 
-      // 4. Schedule next wake-up based on earliest deferred message
-      scheduleNextWakeup()
+      // 4. Schedule next wake-up based on earliest deferred/retry message
+      await scheduleNextWakeup(client)
     } catch (err) {
       log.error({ err }, 'Executor error')
     } finally {
@@ -148,7 +148,7 @@ export function createPoller (pool: pg.Pool, log: any) {
     }
   }
 
-  async function scheduleNextWakeup (): Promise<void> {
+  async function scheduleNextWakeup (client: pg.PoolClient): Promise<void> {
     if (stopped) return
     if (deferredTimer) {
       clearTimeout(deferredTimer)
@@ -156,10 +156,15 @@ export function createPoller (pool: pg.Pool, log: any) {
     }
 
     try {
-      const result = await pool.query(
-        `SELECT EXTRACT(EPOCH FROM (MIN(deliver_at) - NOW())) AS secs
-         FROM workflow_queue_messages
-         WHERE status = 'deferred' AND deliver_at > NOW()`
+      const result = await client.query(
+        `SELECT EXTRACT(EPOCH FROM (MIN(next_time) - NOW())) AS secs
+         FROM (
+           SELECT deliver_at AS next_time FROM workflow_queue_messages
+             WHERE status = 'deferred' AND deliver_at > NOW()
+           UNION ALL
+           SELECT next_retry_at AS next_time FROM workflow_queue_messages
+             WHERE status = 'failed' AND next_retry_at > NOW() AND attempts < 10
+         ) t`
       )
 
       const secs = result.rows[0]?.secs
