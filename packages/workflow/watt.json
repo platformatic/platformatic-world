@@ -4,9 +4,6 @@
     "hostname": "{HOST}",
     "port": "{PORT}"
   },
-  "runtime": {
-    "metrics": true
-  },
   "plugins": {
     "paths": ["./plugins"]
   }

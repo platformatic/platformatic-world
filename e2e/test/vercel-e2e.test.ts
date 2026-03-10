@@ -17,7 +17,7 @@ let nextApp: SpawnedProcess
 
 before(async () => {
   ({ wfService, nextApp } = await setup())
-}, { timeout: 90_000 })
+}, { timeout: 60_000 })
 
 after(() => teardown(wfService, nextApp))
 
@@ -33,12 +33,12 @@ test('promiseAll: parallel steps', { timeout: 30_000 }, async () => {
   assert.equal(result, 'ABC')
 })
 
-test('promiseRace: first step wins', { timeout: 90_000 }, async () => {
+test('promiseRace: first step wins', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('promiseRaceWorkflow')
   assert.equal(result, 'B')
 })
 
-test('promiseAny: one step fails, others succeed', { timeout: 90_000 }, async () => {
+test('promiseAny: one step fails, others succeed', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('promiseAnyWorkflow')
   assert.equal(result, 'B')
 })
@@ -50,7 +50,7 @@ test('promiseRace stress test: 5 concurrent races', { timeout: 120_000 }, async 
 
 // ---- Sleep / deferred delivery ----
 
-test('sleeping: deferred delivery', { timeout: 90_000 }, async () => {
+test('sleeping: deferred delivery', { timeout: 60_000 }, async () => {
   const startTime = Date.now()
   const runId = await triggerE2eWorkflow('sleepingWorkflow')
   const run = await waitForRunStatus(runId, 'completed', 45_000)
@@ -60,7 +60,7 @@ test('sleeping: deferred delivery', { timeout: 90_000 }, async () => {
 })
 
 // Parallel sleep delivery can hit event ordering races under load — retry once.
-test('parallelSleep: concurrent sleeps', { timeout: 90_000 }, async () => {
+test('parallelSleep: concurrent sleeps', { timeout: 60_000 }, async () => {
   for (let attempt = 0; attempt < 2; attempt++) {
     const startTime = Date.now()
     const runId = await triggerE2eWorkflow('parallelSleepWorkflow')
@@ -93,7 +93,7 @@ test('fetch: network inside step', { timeout: 30_000 }, async () => {
 
 // ---- Error handling ----
 
-test('errorRetry: step retries until success', { timeout: 90_000 }, async () => {
+test('errorRetry: step retries until success', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('errorRetrySuccessWorkflow')
   assert.equal(result.finalAttempt, 3)
 })
@@ -163,7 +163,7 @@ test('errorRetrySuccess: regular Error retries until success (with metadata)', {
 
 // ---- Spawn / metadata ----
 
-test('spawnWorkflowFromStep: child workflow', { timeout: 90_000 }, async () => {
+test('spawnWorkflowFromStep: child workflow', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('spawnWorkflowFromStepWorkflow', [7])
   assert.equal(result.parentInput, 7)
   assert.equal(result.childResult.childResult, 14)
@@ -191,22 +191,22 @@ test('workflowAndStepMetadata: metadata propagation', { timeout: 30_000 }, async
 
 // ---- Step function patterns ----
 
-test('stepFunctionPassing: step fn reference passed as argument', { timeout: 90_000 }, async () => {
+test('stepFunctionPassing: step fn reference passed as argument', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('stepFunctionPassingWorkflow')
   assert.equal(result, 40)
 })
 
-test('stepFunctionWithClosure: closure vars preserved', { timeout: 90_000 }, async () => {
+test('stepFunctionWithClosure: closure vars preserved', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('stepFunctionWithClosureWorkflow')
   assert.equal(result, 'Wrapped: Result: 21')
 })
 
-test('closureVariable: nested step with closure vars', { timeout: 90_000 }, async () => {
+test('closureVariable: nested step with closure vars', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('closureVariableWorkflow', [7])
   assert.equal(result, 'Result: 21')
 })
 
-test('thisSerialization: .call() and .apply() on step fns', { timeout: 90_000 }, async () => {
+test('thisSerialization: .call() and .apply() on step fns', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('thisSerializationWorkflow', [10])
   assert.equal(result, 300)
 })
@@ -224,7 +224,7 @@ test('directStepCall: calling a step function outside workflow context', { timeo
 
 // ---- Serialization ----
 
-test('customSerialization: class with WORKFLOW_SERIALIZE/DESERIALIZE', { timeout: 90_000 }, async () => {
+test('customSerialization: class with WORKFLOW_SERIALIZE/DESERIALIZE', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('customSerializationWorkflow', [3, 4])
   assert.deepEqual(result, {
     original: { x: 3, y: 4 },
@@ -234,7 +234,7 @@ test('customSerialization: class with WORKFLOW_SERIALIZE/DESERIALIZE', { timeout
   })
 })
 
-test('instanceMethodStep: instance methods as steps', { timeout: 90_000 }, async () => {
+test('instanceMethodStep: instance methods as steps', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('instanceMethodStepWorkflow', [5])
   assert.deepEqual(result, {
     initialValue: 5,
@@ -247,24 +247,24 @@ test('instanceMethodStep: instance methods as steps', { timeout: 90_000 }, async
 
 // ---- Static method workflows ----
 
-test('Calculator.calculate: static method steps in separate class', { timeout: 90_000 }, async () => {
+test('Calculator.calculate: static method steps in separate class', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('Calculator.calculate', [5, 3])
   assert.equal(result, 16)
 })
 
-test('AllInOneService.processNumber: static workflow + step in same class', { timeout: 90_000 }, async () => {
+test('AllInOneService.processNumber: static workflow + step in same class', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('AllInOneService.processNumber', [10])
   assert.equal(result, 50)
 })
 
-test('ChainableService.processWithThis: static method steps with this', { timeout: 90_000 }, async () => {
+test('ChainableService.processWithThis: static method steps with this', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('ChainableService.processWithThis', [5])
   assert.deepEqual(result, { multiplied: 50, doubledAndMultiplied: 100, sum: 150 })
 })
 
 // ---- Hooks ----
 
-test('hookWorkflow: pause and resume via hook API', { timeout: 90_000 }, async () => {
+test('hookWorkflow: pause and resume via hook API', { timeout: 60_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
   const customData = Math.random().toString(36).slice(2)
 
@@ -283,7 +283,7 @@ test('hookWorkflow: pause and resume via hook API', { timeout: 90_000 }, async (
   assert.equal(run.status, 'completed')
 })
 
-test('hookWorkflow: not resumable via public webhook endpoint', { timeout: 90_000 }, async () => {
+test('hookWorkflow: not resumable via public webhook endpoint', { timeout: 60_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
   const customData = Math.random().toString(36).slice(2)
 
@@ -302,7 +302,7 @@ test('hookWorkflow: not resumable via public webhook endpoint', { timeout: 90_00
   assert.equal(run.status, 'completed')
 })
 
-test('hookCleanupTest: hook token reuse after workflow completion', { timeout: 90_000 }, async () => {
+test('hookCleanupTest: hook token reuse after workflow completion', { timeout: 60_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
   const customData = Math.random().toString(36).slice(2)
 
@@ -323,7 +323,7 @@ test('hookCleanupTest: hook token reuse after workflow completion', { timeout: 9
   assert.equal(run2.status, 'completed')
 })
 
-test('concurrent hook token conflict: two workflows cannot use same token', { timeout: 90_000 }, async () => {
+test('concurrent hook token conflict: two workflows cannot use same token', { timeout: 60_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
   const customData = Math.random().toString(36).slice(2)
 
@@ -340,7 +340,7 @@ test('concurrent hook token conflict: two workflows cannot use same token', { ti
   assert.equal(run1.status, 'completed')
 })
 
-test('hookDisposeTest: hook token reuse after explicit disposal while running', { timeout: 90_000 }, async () => {
+test('hookDisposeTest: hook token reuse after explicit disposal while running', { timeout: 60_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
   const customData = Math.random().toString(36).slice(2)
 
@@ -364,7 +364,7 @@ test('hookDisposeTest: hook token reuse after explicit disposal while running', 
 
 // ---- Webhooks ----
 
-test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 90_000 }, async () => {
+test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 60_000 }, async () => {
   const runId = await triggerE2eWorkflow('webhookWorkflow')
   await sleep(5_000)
 
@@ -412,7 +412,7 @@ test('webhook route with invalid token returns 404', { timeout: 10_000 }, async 
 
 // ---- Cancel ----
 
-test('cancelRun: cancelling a running workflow', { timeout: 90_000 }, async () => {
+test('cancelRun: cancelling a running workflow', { timeout: 60_000 }, async () => {
   const runId = await triggerE2eWorkflow('sleepingWorkflow')
   await sleep(3_000)
   await cancelRun(runId)
@@ -422,7 +422,7 @@ test('cancelRun: cancelling a running workflow', { timeout: 90_000 }, async () =
 
 // ---- Sleep + concurrent patterns ----
 
-test('hookWithSleep: hook payloads delivered correctly with concurrent sleep', { timeout: 90_000 }, async () => {
+test('hookWithSleep: hook payloads delivered correctly with concurrent sleep', { timeout: 60_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
 
   const runId = await triggerE2eWorkflow('hookWithSleepWorkflow', [token])
@@ -440,7 +440,7 @@ test('hookWithSleep: hook payloads delivered correctly with concurrent sleep', {
   assert.equal(run.status, 'completed')
 })
 
-test('sleepWithSequentialSteps: sequential steps work with concurrent sleep', { timeout: 90_000 }, async () => {
+test('sleepWithSequentialSteps: sequential steps work with concurrent sleep', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('sleepWithSequentialStepsWorkflow')
   assert.deepEqual(result, { a: 3, b: 6, c: 10, shouldCancel: false })
 })
@@ -464,7 +464,7 @@ test('pathsAliasWorkflow: import via tsconfig paths', { timeout: 30_000 }, async
 
 // ---- Phase 3: Cross-context serialization ----
 
-test('crossContextSerdeWorkflow: cross-file serde with Vector class', { timeout: 90_000 }, async () => {
+test('crossContextSerdeWorkflow: cross-file serde with Vector class', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('crossContextSerdeWorkflow')
   assert.deepEqual(result, {
     v1: { x: 1, y: 2, z: 3 },
@@ -477,7 +477,7 @@ test('crossContextSerdeWorkflow: cross-file serde with Vector class', { timeout:
 
 // ---- Phase 4: Fault injection ----
 
-test('serverError5xxRetryWorkflow: retries on injected 5xx errors', { timeout: 90_000 }, async () => {
+test('serverError5xxRetryWorkflow: retries on injected 5xx errors', { timeout: 60_000 }, async () => {
   const { result } = await runE2eWorkflow('serverError5xxRetryWorkflow', [42])
   assert.equal(result.result, 84)
   assert.equal(result.retryCount, 2)
@@ -491,13 +491,13 @@ test('readableStreamWorkflow: step returns a ReadableStream', { timeout: 80_000 
   assert.equal(run.status, 'completed')
 })
 
-test('outputStreamWorkflow: getWritable() in workflow passed to steps', { timeout: 90_000 }, async () => {
+test('outputStreamWorkflow: getWritable() in workflow passed to steps', { timeout: 60_000 }, async () => {
   const runId = await triggerE2eWorkflow('outputStreamWorkflow')
   const run = await waitForRunStatus(runId, 'completed', 45_000)
   assert.equal(run.status, 'completed')
 })
 
-test('outputStreamInsideStepWorkflow: getWritable() called inside step functions', { timeout: 90_000 }, async () => {
+test('outputStreamInsideStepWorkflow: getWritable() called inside step functions', { timeout: 60_000 }, async () => {
   const runId = await triggerE2eWorkflow('outputStreamInsideStepWorkflow')
   const run = await waitForRunStatus(runId, 'completed', 45_000)
   assert.equal(run.status, 'completed')
@@ -541,7 +541,7 @@ test('stepFunctionAsStartArgWorkflow: step fn ref passed as start() argument', {
 
 // ---- Health checks ----
 
-test('health check (queue-based): workflow and step endpoints respond', { timeout: 90_000 }, async () => {
+test('health check (queue-based): workflow and step endpoints respond', { timeout: 60_000 }, async () => {
   const { healthCheck, getWorld } = await import('workflow/runtime')
   const world = getWorld()
 
@@ -570,7 +570,7 @@ test('health check endpoint (HTTP): flow and step endpoints respond', { timeout:
 
 // ---- .well-known/agent discovery ----
 
-test('wellKnownAgentWorkflow: step discovery in dot-prefixed directory', { timeout: 90_000 }, async () => {
+test('wellKnownAgentWorkflow: step discovery in dot-prefixed directory', { timeout: 60_000 }, async () => {
   // Fetch manifest to get the workflowId for wellKnownAgentWorkflow
   const manifestRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/manifest.json`)
   if (!manifestRes.ok) {
@@ -597,21 +597,21 @@ test('wellKnownAgentWorkflow: step discovery in dot-prefixed directory', { timeo
 
 // ---- Pages Router ----
 
-test('pages router: addTenWorkflow via /api/trigger-pages', { timeout: 90_000 }, async () => {
+test('pages router: addTenWorkflow via /api/trigger-pages', { timeout: 60_000 }, async () => {
   const runId = await triggerPagesWorkflow('addTenWorkflow', [123])
   const { getRun } = await import('workflow/api')
   const run = await getRun(runId).returnValue
   assert.equal(run, 133)
 })
 
-test('pages router: promiseAllWorkflow via /api/trigger-pages', { timeout: 90_000 }, async () => {
+test('pages router: promiseAllWorkflow via /api/trigger-pages', { timeout: 60_000 }, async () => {
   const runId = await triggerPagesWorkflow('promiseAllWorkflow')
   const { getRun } = await import('workflow/api')
   const run = await getRun(runId).returnValue
   assert.equal(run, 'ABC')
 })
 
-test('pages router: sleepingWorkflow via /api/trigger-pages', { timeout: 90_000 }, async () => {
+test('pages router: sleepingWorkflow via /api/trigger-pages', { timeout: 60_000 }, async () => {
   const startTime = Date.now()
   const runId = await triggerPagesWorkflow('sleepingWorkflow')
   const { getRun } = await import('workflow/api')
