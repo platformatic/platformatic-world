@@ -33,12 +33,14 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   })
 
   function startPolling (): void {
-    execute()
-    orphanTimer = setInterval(checkOrphans, ORPHAN_CHECK_INTERVAL)
+    stopped = false
     setupListener()
+    orphanTimer = setInterval(checkOrphans, ORPHAN_CHECK_INTERVAL)
+    execute()
   }
 
   function stopPolling (): void {
+    stopped = true
     if (deferredTimer) { clearTimeout(deferredTimer); deferredTimer = null }
     if (orphanTimer) { clearInterval(orphanTimer); orphanTimer = null }
     teardownListener()
@@ -79,7 +81,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   }
 
   async function execute (): Promise<void> {
-    if (stopped || !leader.isLeader()) return
+    if (stopped) return
 
     if (executing) {
       pendingNotify = true
@@ -91,7 +93,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       await executeOnce()
     } finally {
       executing = false
-      if (pendingNotify && !stopped && leader.isLeader()) {
+      if (pendingNotify && !stopped) {
         pendingNotify = false
         setImmediate(() => execute())
       }
@@ -160,7 +162,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   }
 
   async function checkOrphans (): Promise<void> {
-    if (stopped || !leader.isLeader()) return
+    if (stopped) return
 
     const client = await pool.connect()
     try {
