@@ -78,6 +78,8 @@ jobs:
           echo "Service failed to start"
           exit 1
         working-directory: packages/workflow
+        env:
+          DATABASE_URL: postgresql://wf:wf@localhost:5434/workflow
 
       - name: Run world integration tests
         run: node --test packages/world/test/client.test.ts

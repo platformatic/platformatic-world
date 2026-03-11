@@ -11,6 +11,11 @@ on:
           - patch
           - minor
           - major
+      npm:
+        description: 'Publish to npm'
+        required: false
+        type: boolean
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -35,6 +40,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: https://registry.npmjs.org
 
       - uses: pnpm/action-setup@v4
 
@@ -46,18 +52,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump version
+      - name: Bump and sync versions
         id: version
         run: |
-          cd packages/workflow
           npm version ${{ inputs.bump }} --no-git-tag-version
+          sh scripts/sync-version.sh
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          cd ../..
-          git add packages/workflow/package.json
+          pnpm install --lockfile-only
+          git add -A
           git commit -m "v$VERSION"
           git tag "v$VERSION"
           git push origin main --tags
+
+      - name: Publish to npm
+        if: inputs.npm
+        run: pnpm -r publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -66,7 +78,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: packages/workflow
