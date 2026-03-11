@@ -7,40 +7,76 @@ import { getRetryDelay, isMaxAttempts } from './retry.ts'
 const ORPHAN_CHECK_INTERVAL = 60_000
 const LEADER_LOCK_ID = 42424242
 const DEFERRED_CHANNEL = 'deferred_messages'
-const SAFETY_POLL_INTERVAL = 5_000
 
-export function createPoller (pool: pg.Pool, log: any) {
+export function createPoller (pool: pg.Pool, connectionString: string, log: any) {
   let stopped = false
   let deferredTimer: ReturnType<typeof setTimeout> | null = null
-  let safetyTimer: ReturnType<typeof setInterval> | null = null
   let orphanTimer: ReturnType<typeof setInterval> | null = null
+  let listenClient: pg.Client | null = null
   let executing = false
   let pendingNotify = false
 
+  // Leader election only — dummy channel required by @platformatic/leader@0.1.0
+  // TODO: remove channels once @platformatic/leader supports election-only mode
   const leader = createLeaderElector({
     pool,
     lock: LEADER_LOCK_ID,
     log,
-    channels: [{
-      channel: DEFERRED_CHANNEL,
-      onNotification: () => { execute() },
-    }],
+    channels: [{ channel: '__leader_noop__', onNotification: () => {} }],
     onLeadershipChange: (isLeader: boolean) => {
       if (isLeader) {
-        execute()
-        orphanTimer = setInterval(checkOrphans, ORPHAN_CHECK_INTERVAL)
-        // Safety-net: periodically trigger execute() in case a NOTIFY or deferred
-        // timer is lost due to race conditions (e.g. a slow dispatch in a
-        // Promise.all batch blocking the poller while timers get cleared by
-        // subsequent scheduleNextWakeup calls).
-        safetyTimer = setInterval(() => { execute() }, SAFETY_POLL_INTERVAL)
+        startPolling()
       } else {
-        if (deferredTimer) { clearTimeout(deferredTimer); deferredTimer = null }
-        if (orphanTimer) { clearInterval(orphanTimer); orphanTimer = null }
-        if (safetyTimer) { clearInterval(safetyTimer); safetyTimer = null }
+        stopPolling()
       }
     },
   })
+
+  function startPolling (): void {
+    execute()
+    orphanTimer = setInterval(checkOrphans, ORPHAN_CHECK_INTERVAL)
+    setupListener()
+  }
+
+  function stopPolling (): void {
+    if (deferredTimer) { clearTimeout(deferredTimer); deferredTimer = null }
+    if (orphanTimer) { clearInterval(orphanTimer); orphanTimer = null }
+    teardownListener()
+  }
+
+  // Dedicated LISTEN client — not from the pool
+  function setupListener (): void {
+    listenClient = new pg.Client({ connectionString })
+    listenClient.on('error', (err) => {
+      log.error({ err }, 'LISTEN connection error')
+      if (!stopped && leader.isLeader()) {
+        setTimeout(() => setupListener(), 1000)
+      }
+    })
+
+    listenClient.connect()
+      .then(() => listenClient!.query(`LISTEN "${DEFERRED_CHANNEL}"`))
+      .then(() => {
+        log.info({ channel: DEFERRED_CHANNEL }, 'Listening to notification channel')
+      })
+      .catch((err) => {
+        log.error({ err }, 'Failed to setup LISTEN connection')
+        if (!stopped && leader.isLeader()) {
+          setTimeout(() => setupListener(), 1000)
+        }
+      })
+
+    listenClient.on('notification', () => {
+      execute()
+    })
+  }
+
+  function teardownListener (): void {
+    if (listenClient) {
+      listenClient.end().catch(() => {})
+      listenClient = null
+    }
+  }
 
   async function execute (): Promise<void> {
     if (stopped || !leader.isLeader()) return
@@ -262,18 +298,8 @@ export function createPoller (pool: pg.Pool, log: any) {
     },
     async stop () {
       stopped = true
-      if (deferredTimer) {
-        clearTimeout(deferredTimer)
-        deferredTimer = null
-      }
-      if (orphanTimer) {
-        clearInterval(orphanTimer)
-        orphanTimer = null
-      }
-      if (safetyTimer) {
-        clearInterval(safetyTimer)
-        safetyTimer = null
-      }
+      stopPolling()
+      teardownListener()
       await leader.stop()
     },
   }
