@@ -188,13 +188,13 @@ export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: Sp
   killPort(NEXT_PORT)
   await sleep(500)
 
-  // 1. Start the workflow service in single-tenant mode
-  const wfService = startProcess('node', ['src/server.ts'], {
+  // 1. Start the workflow service in single-tenant mode via Watt
+  const wfService = startProcess('npx', ['wattpm', 'start'], {
     DATABASE_URL: DB_URL,
     PORT: String(WF_PORT),
   }, WORKFLOW_ROOT)
 
-  await waitForReady(`${WF_URL}/status`)
+  await waitForReady(`${WF_URL}/api/v1/apps/default/runs`)
 
   // 2. Clean up stale data from any previous test runs
   const { default: pg } = await import('pg')
