@@ -364,11 +364,17 @@ test('hookDisposeTest: hook token reuse after explicit disposal while running', 
 
 // ---- Webhooks ----
 
-test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 60_000 }, async () => {
+test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 120_000 }, async () => {
   const runId = await triggerE2eWorkflow('webhookWorkflow')
-  await sleep(5_000)
 
-  const hooks = await getHooksByRunId(runId)
+  // Poll until all 3 hooks are created instead of a fixed sleep
+  let hooks: any[] = []
+  const start = Date.now()
+  while (Date.now() - start < 30_000) {
+    hooks = await getHooksByRunId(runId)
+    if (hooks.length >= 3) break
+    await sleep(1_000)
+  }
   assert.ok(hooks.length >= 3, `Expected 3 hooks, got ${hooks.length}`)
 
   const [token1, token2, token3] = hooks.map((h: any) => h.token)
