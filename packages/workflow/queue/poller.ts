@@ -5,6 +5,16 @@ import { dispatchMessage, type DispatchResult } from './dispatcher.ts'
 import { getRetryDelay, isMaxAttempts } from './retry.ts'
 
 const ORPHAN_CHECK_INTERVAL = 60_000
+// Safety-net poll interval: scheduleNextWakeup() is fire-and-forget to avoid
+// blocking pendingNotify re-runs. When multiple executeOnce() cycles run
+// back-to-back, two concurrent scheduleNextWakeup() calls can race — the
+// second clears the first's deferredTimer, then queries the DB after the
+// deferred message's deliver_at has passed NOW(), finding nothing to schedule.
+// The deferred message is stuck: deliver_at in the past but status still
+// 'deferred', with no timer or notification to trigger promotion.
+// This interval ensures executeOnce() runs periodically regardless, so any
+// stuck deferred messages are promoted within a bounded time window.
+const SAFETY_POLL_INTERVAL = 5_000
 const LEADER_LOCK_ID = 42424242
 const DEFERRED_CHANNEL = 'deferred_messages'
 
@@ -12,6 +22,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   let stopped = false
   let deferredTimer: ReturnType<typeof setTimeout> | null = null
   let orphanTimer: ReturnType<typeof setInterval> | null = null
+  let safetyTimer: ReturnType<typeof setInterval> | null = null
   let listenClient: pg.Client | null = null
   let executing = false
   let pendingNotify = false
@@ -22,7 +33,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     pool,
     lock: LEADER_LOCK_ID,
     log,
-    channels: [{ channel: '__leader_noop__', onNotification: () => {} }],
+    channels: [],
     onLeadershipChange: (isLeader: boolean) => {
       if (isLeader) {
         startPolling()
@@ -36,6 +47,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     stopped = false
     setupListener()
     orphanTimer = setInterval(checkOrphans, ORPHAN_CHECK_INTERVAL)
+    safetyTimer = setInterval(() => execute(), SAFETY_POLL_INTERVAL)
     execute()
   }
 
@@ -43,6 +55,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     stopped = true
     if (deferredTimer) { clearTimeout(deferredTimer); deferredTimer = null }
     if (orphanTimer) { clearInterval(orphanTimer); orphanTimer = null }
+    if (safetyTimer) { clearInterval(safetyTimer); safetyTimer = null }
     teardownListener()
   }
 

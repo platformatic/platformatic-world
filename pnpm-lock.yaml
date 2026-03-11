@@ -58,8 +58,8 @@ importers:
         specifier: ^4.1.0
         version: 4.2.0
       '@platformatic/leader':
-        specifier: ^0.1.0
-        version: 0.1.1
+        specifier: ^0.2.0
+        version: 0.2.0
       '@platformatic/service':
         specifier: ^3.40.0
         version: 3.41.0(typescript@5.9.3)
@@ -1225,8 +1225,8 @@ packages:
     resolution: {integrity: sha512-wrGVupCHmvLXRl/7A0I+T0Nrc2avUqvYXeg3mK3UpbA9QoR9bki9NOHtznqs7nC97HPDXiDp1+bfldT4GvVu/g==}
     engines: {node: '>=22.19.0'}
 
-  '@platformatic/leader@0.1.1':
-    resolution: {integrity: sha512-BHp8sHN8x/HGjj9G6Dt6Dc6f/zW02oQ9CMxXGsOyTMbs5HjQ9xJ3eGwKJG5KJOBja7/oGglLWh8MY692egWO/A==}
+  '@platformatic/leader@0.2.0':
+    resolution: {integrity: sha512-Sc2kdrlrJvSnWZyt2XiCDaPHFILBlOftKrer2zDTrzgh6pv4v18hOG5MUJy8bF/dQtnIo91HGUpf3WNGBdRuPQ==}
     engines: {node: '>=22.0.0'}
 
   '@platformatic/metrics@3.41.0':
@@ -5926,7 +5926,7 @@ snapshots:
       '@fastify/error': 4.2.0
       '@watchable/unpromise': 1.0.2
 
-  '@platformatic/leader@0.1.1':
+  '@platformatic/leader@0.2.0':
     dependencies:
       pg: 8.20.0
       pino: 10.3.1

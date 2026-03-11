@@ -119,7 +119,7 @@ test('errorRetryFatal: FatalError fails immediately without retries', { timeout:
 test('errorRetryCustomDelay: RetryableError respects retryAfter', { timeout: 120_000 }, async () => {
   const startTime = Date.now()
   const runId = await triggerE2eWorkflow('errorRetryCustomDelay')
-  const run = await waitForRunStatus(runId, 'completed', 110_000)
+  const run = await waitForRunStatus(runId, 'completed', 90_000)
   const elapsed = Date.now() - startTime
   assert.equal(run.status, 'completed')
   assert.ok(elapsed >= 9_000, `retry delay should be at least 9s, got ${elapsed}ms`)
@@ -157,7 +157,7 @@ test('errorStepCrossFile: step error from imported helper is caught', { timeout:
 
 test('errorRetrySuccess: regular Error retries until success (with metadata)', { timeout: 120_000 }, async () => {
   const runId = await triggerE2eWorkflow('errorRetrySuccess')
-  const run = await waitForRunStatus(runId, 'completed', 110_000)
+  const run = await waitForRunStatus(runId, 'completed', 90_000)
   assert.equal(run.status, 'completed')
 })
 
