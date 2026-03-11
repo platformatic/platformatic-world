@@ -66,9 +66,9 @@ jobs:
 
       - name: Start workflow service
         run: |
-          node packages/workflow/src/server.ts &
+          PORT=3042 npx wattpm start &
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:3042/status > /dev/null 2>&1; then
+            if curl -sf http://localhost:9090/ready > /dev/null 2>&1; then
               echo "Service is ready"
               exit 0
             fi
@@ -76,6 +76,7 @@ jobs:
           done
           echo "Service failed to start"
           exit 1
+        working-directory: packages/workflow
 
       - name: Run world integration tests
         run: node --test packages/world/test/client.test.ts

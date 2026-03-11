@@ -1,55 +1,30 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import Fastify from 'fastify'
-import autoload from '@fastify/autoload'
-import type { FastifyInstance } from 'fastify'
+import { setupTest, teardownTest, type TestContext } from './helper.ts'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
-let app: FastifyInstance
+let ctx: TestContext
 
 before(async () => {
-  process.env.PLT_WORLD_APP_ID = 'single-tenant-test'
-  process.env.WF_ENABLE_POLLER = 'false'
-
-  app = Fastify({ logger: false })
-  await app.register(autoload, { dir: join(__dirname, '..', 'plugins') })
-  await app.ready()
+  ctx = await setupTest()
 })
 
 after(async () => {
-  const result = await app.pg.query(
-    'SELECT id FROM workflow_applications WHERE app_id = $1',
-    ['single-tenant-test']
-  )
-  if (result.rows.length > 0) {
-    const id = result.rows[0].id
-    await app.pg.query('DELETE FROM workflow_events WHERE application_id = $1', [id])
-    await app.pg.query('DELETE FROM workflow_queue_messages WHERE application_id = $1', [id])
-    await app.pg.query('DELETE FROM workflow_runs WHERE application_id = $1', [id])
-    await app.pg.query('DELETE FROM workflow_deployment_versions WHERE application_id = $1', [id])
-    await app.pg.query('DELETE FROM workflow_queue_handlers WHERE application_id = $1', [id])
-    await app.pg.query('DELETE FROM workflow_app_quotas WHERE application_id = $1', [id])
-    await app.pg.query('DELETE FROM workflow_applications WHERE id = $1', [id])
-  }
-  await app.close()
+  await teardownTest(ctx)
 })
 
 test('default app is auto-provisioned', async () => {
-  const result = await app.pg.query(
+  const result = await ctx.app.pg.query(
     'SELECT id, app_id FROM workflow_applications WHERE app_id = $1',
-    ['single-tenant-test']
+    [ctx.appId]
   )
   assert.equal(result.rows.length, 1)
-  assert.equal(result.rows[0].app_id, 'single-tenant-test')
+  assert.equal(result.rows[0].app_id, ctx.appId)
 })
 
 test('POST /api/v1/apps/:appId/events works without auth header', async () => {
-  const runResponse = await app.inject({
+  const runResponse = await ctx.app.inject({
     method: 'POST',
-    url: '/api/v1/apps/single-tenant-test/events',
+    url: `/api/v1/apps/${ctx.appId}/events`,
     payload: {
       eventType: 'test_event',
       eventData: { hello: 'world' },
@@ -58,10 +33,10 @@ test('POST /api/v1/apps/:appId/events works without auth header', async () => {
   assert.equal(runResponse.statusCode < 500, true, `Expected non-500, got ${runResponse.statusCode}: ${runResponse.body}`)
 })
 
-test('GET /api/v1/apps/single-tenant-test/runs works without auth', async () => {
-  const response = await app.inject({
+test('GET runs works without auth', async () => {
+  const response = await ctx.app.inject({
     method: 'GET',
-    url: '/api/v1/apps/single-tenant-test/runs',
+    url: `/api/v1/apps/${ctx.appId}/runs`,
   })
   assert.equal(response.statusCode, 200)
   const body = JSON.parse(response.body)
@@ -69,9 +44,9 @@ test('GET /api/v1/apps/single-tenant-test/runs works without auth', async () => 
 })
 
 test('POST queue message works without auth', async () => {
-  const response = await app.inject({
+  const response = await ctx.app.inject({
     method: 'POST',
-    url: '/api/v1/apps/single-tenant-test/queue',
+    url: `/api/v1/apps/${ctx.appId}/queue`,
     payload: {
       queueName: 'test-queue',
       message: { action: 'test' },

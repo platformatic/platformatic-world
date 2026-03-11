@@ -302,7 +302,7 @@ test('hookWorkflow: not resumable via public webhook endpoint', { timeout: 60_00
   assert.equal(run.status, 'completed')
 })
 
-test('hookCleanupTest: hook token reuse after workflow completion', { timeout: 90_000 }, async () => {
+test('hookCleanupTest: hook token reuse after workflow completion', { timeout: 60_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
   const customData = Math.random().toString(36).slice(2)
 
@@ -340,7 +340,7 @@ test('concurrent hook token conflict: two workflows cannot use same token', { ti
   assert.equal(run1.status, 'completed')
 })
 
-test('hookDisposeTest: hook token reuse after explicit disposal while running', { timeout: 90_000 }, async () => {
+test('hookDisposeTest: hook token reuse after explicit disposal while running', { timeout: 60_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
   const customData = Math.random().toString(36).slice(2)
 
@@ -422,7 +422,7 @@ test('cancelRun: cancelling a running workflow', { timeout: 60_000 }, async () =
 
 // ---- Sleep + concurrent patterns ----
 
-test('hookWithSleep: hook payloads delivered correctly with concurrent sleep', { timeout: 90_000 }, async () => {
+test('hookWithSleep: hook payloads delivered correctly with concurrent sleep', { timeout: 60_000 }, async () => {
   const token = Math.random().toString(36).slice(2)
 
   const runId = await triggerE2eWorkflow('hookWithSleepWorkflow', [token])
