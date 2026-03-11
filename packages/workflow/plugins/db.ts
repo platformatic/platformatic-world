@@ -11,7 +11,10 @@ declare module 'fastify' {
 }
 
 async function dbPlugin (app: FastifyInstance): Promise<void> {
-  const connectionString = process.env.DATABASE_URL || 'postgresql://wf:wf@localhost:5434/workflow'
+  const connectionString = process.env.DATABASE_URL
+  if (!connectionString) {
+    throw new Error('DATABASE_URL environment variable is required')
+  }
 
   const pool = await initDb({ connectionString })
   decorateDb(app, pool, connectionString)
