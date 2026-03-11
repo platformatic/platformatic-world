@@ -114,6 +114,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Build world package
+        run: pnpm -C packages/world build
+
       - name: Build Next.js e2e app
         run: pnpm -C e2e build
         env:
