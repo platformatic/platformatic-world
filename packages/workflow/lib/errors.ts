@@ -1,0 +1,15 @@
+import createError from '@fastify/error'
+
+export const RunNotFound = createError('WF_RUN_NOT_FOUND', 'Run %s not found', 404)
+export const StepNotFound = createError('WF_STEP_NOT_FOUND', 'Step %s not found', 404)
+export const HookNotFound = createError('WF_HOOK_NOT_FOUND', 'Hook %s not found', 404)
+export const WaitNotFound = createError('WF_WAIT_NOT_FOUND', 'Wait %s not found', 404)
+export const HookTokenConflict = createError('WF_HOOK_TOKEN_CONFLICT', 'Hook token %s already exists', 409)
+export const DuplicateIdempotencyKey = createError('WF_DUPLICATE_IDEMPOTENCY_KEY', 'Idempotency key %s already processed', 409)
+export const NoHandlerForVersion = createError('WF_NO_HANDLER', 'No handler registered for version %s', 503)
+export const VersionExpired = createError('WF_VERSION_EXPIRED', 'Deployment version %s is expired', 410)
+export const Unauthorized = createError('WF_UNAUTHORIZED', 'Unauthorized: %s', 401)
+export const Forbidden = createError('WF_FORBIDDEN', 'Forbidden: %s', 403)
+export const AppNotFound = createError('WF_APP_NOT_FOUND', 'Application %s not found', 404)
+export const StreamNotFound = createError('WF_STREAM_NOT_FOUND', 'Stream %s not found', 404)
+export const BadRequest = createError('WF_BAD_REQUEST', '%s', 400)

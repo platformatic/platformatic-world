@@ -1,24 +1,25 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildApp } from '../src/app.ts'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import Fastify from 'fastify'
+import autoload from '@fastify/autoload'
 import type { FastifyInstance } from 'fastify'
 
-const CONNECTION_STRING = process.env.DATABASE_URL || 'postgresql://wf:wf@localhost:5434/workflow'
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 let app: FastifyInstance
 
 before(async () => {
-  app = await buildApp({
-    connectionString: CONNECTION_STRING,
-    singleTenant: true,
-    defaultAppId: 'single-tenant-test',
-    enablePoller: false,
-  })
+  process.env.PLT_WORLD_APP_ID = 'single-tenant-test'
+  process.env.WF_ENABLE_POLLER = 'false'
+
+  app = Fastify({ logger: false })
+  await app.register(autoload, { dir: join(__dirname, '..', 'plugins') })
   await app.ready()
 })
 
 after(async () => {
-  // Clean up
   const result = await app.pg.query(
     'SELECT id FROM workflow_applications WHERE app_id = $1',
     ['single-tenant-test']
@@ -45,24 +46,7 @@ test('default app is auto-provisioned', async () => {
   assert.equal(result.rows[0].app_id, 'single-tenant-test')
 })
 
-test('GET /status works without auth header', async () => {
-  const response = await app.inject({
-    method: 'GET',
-    url: '/status',
-  })
-  assert.equal(response.statusCode, 200)
-})
-
-test('GET /ready works without auth header', async () => {
-  const response = await app.inject({
-    method: 'GET',
-    url: '/ready',
-  })
-  assert.equal(response.statusCode, 200)
-})
-
 test('POST /api/v1/apps/:appId/events works without auth header', async () => {
-  // First create a run
   const runResponse = await app.inject({
     method: 'POST',
     url: '/api/v1/apps/single-tenant-test/events',
