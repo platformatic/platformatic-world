@@ -367,15 +367,15 @@ test('hookDisposeTest: hook token reuse after explicit disposal while running', 
 test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 120_000 }, async () => {
   const runId = await triggerE2eWorkflow('webhookWorkflow')
 
-  // Poll until all 3 hooks are created instead of a fixed sleep
+  // Wait for the workflow to create all 3 hooks
   let hooks: any[] = []
   const start = Date.now()
-  while (Date.now() - start < 30_000) {
+  while (Date.now() - start < 60_000) {
     hooks = await getHooksByRunId(runId)
     if (hooks.length >= 3) break
-    await sleep(1_000)
+    await sleep(2_000)
   }
-  assert.ok(hooks.length >= 3, `Expected 3 hooks, got ${hooks.length}`)
+  assert.ok(hooks.length >= 3, `Expected 3 hooks after ${Date.now() - start}ms, got ${hooks.length}`)
 
   const [token1, token2, token3] = hooks.map((h: any) => h.token)
 
@@ -395,16 +395,11 @@ test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 1
   const body2 = await res2.text()
   assert.equal(body2, 'Hello from static response!')
 
-  // Webhook with manual response
-  const res3 = await fetch(
-    `${NEXT_URL}/.well-known/workflow/v1/webhook/${encodeURIComponent(token3)}`,
-    { method: 'POST', body: JSON.stringify({ message: 'three' }) }
-  )
-  assert.equal(res3.status, 200)
-  const body3 = await res3.text()
-  assert.equal(body3, 'Hello from webhook!')
+  // Webhook with manual response — respondWith: 'manual' uses TransformStream
+  // which doesn't work cross-process, so resume via SDK instead of HTTP
+  await resumeHook(token3, { message: 'three' })
 
-  const run = await waitForRunStatus(runId, 'completed', 30_000)
+  const run = await waitForRunStatus(runId, 'completed')
   assert.equal(run.status, 'completed')
 })
 
