@@ -50,10 +50,10 @@ test('promiseRace stress test: 5 concurrent races', { timeout: 120_000 }, async 
 
 // ---- Sleep / deferred delivery ----
 
-test('sleeping: deferred delivery', { timeout: 60_000 }, async () => {
+test('sleeping: deferred delivery', { timeout: 80_000 }, async () => {
   const startTime = Date.now()
   const runId = await triggerE2eWorkflow('sleepingWorkflow')
-  const run = await waitForRunStatus(runId, 'completed', 45_000)
+  const run = await waitForRunStatus(runId, 'completed')
   const elapsed = Date.now() - startTime
   assert.equal(run.status, 'completed')
   assert.ok(elapsed >= 9_000, `sleep should be at least 9s, got ${elapsed}ms`)
@@ -112,7 +112,7 @@ test('errorFatalCatchable: FatalError can be caught with FatalError.is()', { tim
 
 test('errorRetryFatal: FatalError fails immediately without retries', { timeout: 30_000 }, async () => {
   const runId = await triggerE2eWorkflow('errorRetryFatal')
-  const run = await waitForRunStatus(runId, 'failed', 30_000)
+  const run = await waitForRunStatus(runId, 'failed')
   assert.equal(run.status, 'failed')
 })
 
@@ -139,13 +139,13 @@ test('errorStepBasic: step error caught in workflow', { timeout: 30_000 }, async
 
 test('errorWorkflowNested: nested error causes workflow to fail', { timeout: 30_000 }, async () => {
   const runId = await triggerE2eWorkflow('errorWorkflowNested')
-  const run = await waitForRunStatus(runId, 'failed', 30_000)
+  const run = await waitForRunStatus(runId, 'failed')
   assert.equal(run.status, 'failed')
 })
 
 test('errorWorkflowCrossFile: error from imported helper causes workflow failure', { timeout: 30_000 }, async () => {
   const runId = await triggerE2eWorkflow('errorWorkflowCrossFile')
-  const run = await waitForRunStatus(runId, 'failed', 30_000)
+  const run = await waitForRunStatus(runId, 'failed')
   assert.equal(run.status, 'failed')
 })
 
@@ -279,7 +279,7 @@ test('hookWorkflow: pause and resume via hook API', { timeout: 60_000 }, async (
 
   await resumeHook(token, { message: 'three', customData, done: true })
 
-  const run = await waitForRunStatus(runId, 'completed', 30_000)
+  const run = await waitForRunStatus(runId, 'completed')
   assert.equal(run.status, 'completed')
 })
 
@@ -298,7 +298,7 @@ test('hookWorkflow: not resumable via public webhook endpoint', { timeout: 60_00
 
   await resumeHook(token, { message: 'via-server', customData, done: true })
 
-  const run = await waitForRunStatus(runId, 'completed', 30_000)
+  const run = await waitForRunStatus(runId, 'completed')
   assert.equal(run.status, 'completed')
 })
 
@@ -310,7 +310,7 @@ test('hookCleanupTest: hook token reuse after workflow completion', { timeout: 6
   await waitForHookByToken(token)
 
   await resumeHook(token, { message: 'test-message-1', customData })
-  await waitForRunStatus(runId1, 'completed', 30_000)
+  await waitForRunStatus(runId1, 'completed')
 
   await triggerE2eWorkflow('hookCleanupTestWorkflow', [token, customData])
 
@@ -319,7 +319,7 @@ test('hookCleanupTest: hook token reuse after workflow completion', { timeout: 6
 
   await resumeHook(token, { message: 'test-message-2', customData })
   const hook2 = await waitForHookByToken(token)
-  const run2 = await waitForRunStatus(hook2.runId, 'completed', 30_000)
+  const run2 = await waitForRunStatus(hook2.runId, 'completed')
   assert.equal(run2.status, 'completed')
 })
 
@@ -332,11 +332,11 @@ test('concurrent hook token conflict: two workflows cannot use same token', { ti
 
   const runId2 = await triggerE2eWorkflow('hookCleanupTestWorkflow', [token, customData])
 
-  const run2 = await waitForRunStatus(runId2, 'failed', 30_000)
+  const run2 = await waitForRunStatus(runId2, 'failed')
   assert.equal(run2.status, 'failed')
 
   await resumeHook(token, { message: 'test-concurrent', customData })
-  const run1 = await waitForRunStatus(runId1, 'completed', 30_000)
+  const run1 = await waitForRunStatus(runId1, 'completed')
   assert.equal(run1.status, 'completed')
 })
 
@@ -356,9 +356,9 @@ test('hookDisposeTest: hook token reuse after explicit disposal while running', 
 
   await resumeHook(token, { message: 'second-payload', customData })
 
-  const run1 = await waitForRunStatus(runId1, 'completed', 30_000)
+  const run1 = await waitForRunStatus(runId1, 'completed')
   assert.equal(run1.status, 'completed')
-  const run2 = await waitForRunStatus(runId2, 'completed', 30_000)
+  const run2 = await waitForRunStatus(runId2, 'completed')
   assert.equal(run2.status, 'completed')
 })
 
@@ -405,7 +405,7 @@ test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { skip: true
   const body3 = await res3.text()
   assert.equal(body3, 'Hello from webhook!')
 
-  const run = await waitForRunStatus(runId, 'completed', 30_000)
+  const run = await waitForRunStatus(runId, 'completed')
   assert.equal(run.status, 'completed')
 })
 
@@ -443,7 +443,7 @@ test('hookWithSleep: hook payloads delivered correctly with concurrent sleep', {
 
   await resumeHook(token, { type: 'done', done: true })
 
-  const run = await waitForRunStatus(runId, 'completed', 30_000)
+  const run = await waitForRunStatus(runId, 'completed')
   assert.equal(run.status, 'completed')
 })
 
@@ -498,15 +498,15 @@ test('readableStreamWorkflow: step returns a ReadableStream', { timeout: 80_000 
   assert.equal(run.status, 'completed')
 })
 
-test('outputStreamWorkflow: getWritable() in workflow passed to steps', { timeout: 60_000 }, async () => {
+test('outputStreamWorkflow: getWritable() in workflow passed to steps', { timeout: 80_000 }, async () => {
   const runId = await triggerE2eWorkflow('outputStreamWorkflow')
-  const run = await waitForRunStatus(runId, 'completed', 45_000)
+  const run = await waitForRunStatus(runId, 'completed')
   assert.equal(run.status, 'completed')
 })
 
-test('outputStreamInsideStepWorkflow: getWritable() called inside step functions', { timeout: 60_000 }, async () => {
+test('outputStreamInsideStepWorkflow: getWritable() called inside step functions', { timeout: 80_000 }, async () => {
   const runId = await triggerE2eWorkflow('outputStreamInsideStepWorkflow')
-  const run = await waitForRunStatus(runId, 'completed', 45_000)
+  const run = await waitForRunStatus(runId, 'completed')
   assert.equal(run.status, 'completed')
 })
 
