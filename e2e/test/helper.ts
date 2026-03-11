@@ -57,7 +57,7 @@ export async function waitForReady (url: string, timeoutMs = 60_000): Promise<vo
   throw new Error(`Timed out waiting for ${url}`)
 }
 
-export async function waitForRunStatus (runId: string, status: string, timeoutMs = 60_000): Promise<any> {
+export async function waitForRunStatus (runId: string, status: string, timeoutMs = 30_000): Promise<any> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     const res = await fetch(`${WF_URL}/api/v1/apps/default/runs/${runId}`)
