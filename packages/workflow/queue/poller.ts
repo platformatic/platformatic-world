@@ -149,7 +149,9 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       }
 
       // 4. Schedule next wake-up based on earliest deferred/retry message
-      await scheduleNextWakeup(client)
+      // Fire-and-forget: must not block executeOnce so pendingNotify re-runs
+      // are not delayed, and so re-runs use their own pool connection for the query
+      scheduleNextWakeup()
     } catch (err) {
       log.error({ err }, 'Executor error')
     } finally {
@@ -192,7 +194,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     }
   }
 
-  async function scheduleNextWakeup (client: pg.PoolClient): Promise<void> {
+  async function scheduleNextWakeup (): Promise<void> {
     if (stopped) return
     if (deferredTimer) {
       clearTimeout(deferredTimer)
@@ -200,7 +202,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     }
 
     try {
-      const result = await client.query(
+      const result = await pool.query(
         `SELECT EXTRACT(EPOCH FROM (MIN(next_time) - NOW())) AS secs
          FROM (
            SELECT deliver_at AS next_time FROM workflow_queue_messages
