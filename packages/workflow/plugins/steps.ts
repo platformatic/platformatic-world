@@ -1,8 +1,9 @@
+import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { StepNotFound } from '../lib/errors.ts'
 import { formatStep } from './events.ts'
 
-export default async function stepsPlugin (app: FastifyInstance): Promise<void> {
+async function stepsPlugin (app: FastifyInstance): Promise<void> {
   // Get step by ID
   app.get('/api/v1/apps/:appId/runs/:runId/steps/:stepId', async (request) => {
     const { runId, stepId } = request.params as { runId: string; stepId: string }
@@ -41,3 +42,5 @@ export default async function stepsPlugin (app: FastifyInstance): Promise<void> 
     return { data, cursor: nextCursor, hasMore }
   })
 }
+
+export default fp(stepsPlugin, { name: 'steps', dependencies: ['auth'] })

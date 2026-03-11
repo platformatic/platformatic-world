@@ -1,7 +1,8 @@
+import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { BadRequest } from '../lib/errors.ts'
 
-export default async function handlersPlugin (app: FastifyInstance): Promise<void> {
+async function handlersPlugin (app: FastifyInstance): Promise<void> {
   // Register pod queue handler endpoints
   app.post('/api/v1/apps/:appId/handlers', async (request, reply) => {
     const appId = request.appId
@@ -49,3 +50,5 @@ export default async function handlersPlugin (app: FastifyInstance): Promise<voi
     return { deregistered: true }
   })
 }
+
+export default fp(handlersPlugin, { name: 'handlers', dependencies: ['auth'] })

@@ -1,3 +1,4 @@
+import fp from 'fastify-plugin'
 import { EventEmitter } from 'node:events'
 import pg from 'pg'
 import type { FastifyInstance } from 'fastify'
@@ -7,7 +8,7 @@ function isHealthCheckStream (name: string): boolean {
   return name.startsWith('__health_check__')
 }
 
-export default async function streamsPlugin (app: FastifyInstance): Promise<void> {
+async function streamsPlugin (app: FastifyInstance): Promise<void> {
   // Shared LISTEN client + EventEmitter for stream notifications
   const streamEvents = new EventEmitter()
   let listenClient: pg.Client | null = null
@@ -290,3 +291,5 @@ export default async function streamsPlugin (app: FastifyInstance): Promise<void
     return result.rows.map(row => row.stream_name)
   })
 }
+
+export default fp(streamsPlugin, { name: 'streams', dependencies: ['auth'] })

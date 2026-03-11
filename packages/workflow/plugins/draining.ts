@@ -1,7 +1,8 @@
+import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { Forbidden } from '../lib/errors.ts'
 
-export default async function drainingPlugin (app: FastifyInstance): Promise<void> {
+async function drainingPlugin (app: FastifyInstance): Promise<void> {
   // Get version status — called by ICC
   app.get('/api/v1/apps/:appId/versions/:deploymentId/status', async (request) => {
     if (!request.isAdmin) throw new Forbidden('admin access required')
@@ -117,3 +118,5 @@ export default async function drainingPlugin (app: FastifyInstance): Promise<voi
     }
   })
 }
+
+export default fp(drainingPlugin, { name: 'draining', dependencies: ['auth'] })

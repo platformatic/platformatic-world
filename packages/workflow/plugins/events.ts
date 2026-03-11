@@ -1,7 +1,8 @@
+import fp from 'fastify-plugin'
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { RunNotFound, BadRequest } from '../lib/errors.ts'
-import { checkRunQuota, checkEventQuota } from './quotas.ts'
+import { checkRunQuota, checkEventQuota } from '../lib/quotas.ts'
 import type pg from 'pg'
 
 // Encode data as binary for storage. Supports both Uint8Array (base64) and JSON.
@@ -140,7 +141,7 @@ async function insertEvent (client: pg.PoolClient, runId: string, appId: number,
   return result.rows[0]
 }
 
-export default async function eventsPlugin (app: FastifyInstance): Promise<void> {
+async function eventsPlugin (app: FastifyInstance): Promise<void> {
   // Custom error handler to include meta in error responses (for SDK compatibility)
   app.setErrorHandler((error: any, _request, reply) => {
     const statusCode = error.statusCode || 500
@@ -597,3 +598,5 @@ export default async function eventsPlugin (app: FastifyInstance): Promise<void>
 }
 
 export { formatRun, formatStep, formatHook, formatWait, formatEvent, decodeData, encodeData }
+
+export default fp(eventsPlugin, { name: 'events', dependencies: ['auth'] })

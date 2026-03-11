@@ -1,8 +1,9 @@
+import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { RunNotFound } from '../lib/errors.ts'
 import { formatRun } from './events.ts'
 
-export default async function runsPlugin (app: FastifyInstance): Promise<void> {
+async function runsPlugin (app: FastifyInstance): Promise<void> {
   // Get run by ID
   app.get('/api/v1/apps/:appId/runs/:runId', async (request) => {
     const { runId } = request.params as { runId: string }
@@ -70,3 +71,5 @@ export default async function runsPlugin (app: FastifyInstance): Promise<void> {
     return { data, cursor: nextCursor, hasMore }
   })
 }
+
+export default fp(runsPlugin, { name: 'runs', dependencies: ['auth'] })

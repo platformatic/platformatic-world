@@ -1,8 +1,9 @@
+import fp from 'fastify-plugin'
 import { hkdfSync } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { BadRequest } from '../lib/errors.ts'
 
-export default async function encryptionPlugin (app: FastifyInstance): Promise<void> {
+async function encryptionPlugin (app: FastifyInstance): Promise<void> {
   app.get('/api/v1/apps/:appId/encryption-key', async (request) => {
     const query = request.query as { runId?: string }
     const appId = request.appId
@@ -33,3 +34,5 @@ export default async function encryptionPlugin (app: FastifyInstance): Promise<v
     return { key: Buffer.from(derivedKey).toString('base64') }
   })
 }
+
+export default fp(encryptionPlugin, { name: 'encryption', dependencies: ['auth'] })

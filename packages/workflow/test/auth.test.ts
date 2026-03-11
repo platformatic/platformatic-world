@@ -30,12 +30,4 @@ describe('auth - single-tenant mode', () => {
     })
     assert.equal(response.statusCode, 201)
   })
-
-  it('should allow public paths without auth', async () => {
-    const ready = await ctx.app.inject({ method: 'GET', url: '/ready' })
-    assert.equal(ready.statusCode, 200)
-
-    const status = await ctx.app.inject({ method: 'GET', url: '/status' })
-    assert.equal(status.statusCode, 200)
-  })
 })

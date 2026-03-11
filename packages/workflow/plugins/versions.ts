@@ -1,7 +1,8 @@
+import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { Forbidden, BadRequest } from '../lib/errors.ts'
 
-export default async function versionsPlugin (app: FastifyInstance): Promise<void> {
+async function versionsPlugin (app: FastifyInstance): Promise<void> {
   // Version notification — called by ICC
   app.post('/api/v1/versions/notify', async (request) => {
     if (!request.isAdmin) throw new Forbidden('admin access required')
@@ -38,3 +39,5 @@ export default async function versionsPlugin (app: FastifyInstance): Promise<voi
     return { updated: true }
   })
 }
+
+export default fp(versionsPlugin, { name: 'versions', dependencies: ['auth'] })

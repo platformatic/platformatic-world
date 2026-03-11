@@ -1,8 +1,9 @@
+import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { DuplicateIdempotencyKey, BadRequest } from '../lib/errors.ts'
-import { checkQueueRateLimit } from './quotas.ts'
+import { checkQueueRateLimit } from '../lib/quotas.ts'
 
-export default async function queuePlugin (app: FastifyInstance): Promise<void> {
+async function queuePlugin (app: FastifyInstance): Promise<void> {
   app.post('/api/v1/apps/:appId/queue', async (request, reply) => {
     const appId = request.appId
     const body = request.body as {
@@ -57,7 +58,7 @@ export default async function queuePlugin (app: FastifyInstance): Promise<void> 
       const messageId = result.rows[0].id
 
       // Wake the executor so it can recalculate its timer
-      await app.pg.query("SELECT pg_notify('deferred_messages', '')")
+      await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
 
       reply.code(201)
       return {
@@ -87,9 +88,11 @@ export default async function queuePlugin (app: FastifyInstance): Promise<void> 
     const messageId = insertResult.rows[0].id
 
     // Wake the poller to dispatch this message asynchronously
-    await app.pg.query("SELECT pg_notify('deferred_messages', '')")
+    await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
 
     reply.code(201)
     return { messageId: `msg_${messageId}` }
   })
 }
+
+export default fp(queuePlugin, { name: 'queue', dependencies: ['auth'] })

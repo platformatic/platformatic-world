@@ -1,8 +1,9 @@
+import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { HookNotFound } from '../lib/errors.ts'
 import { formatHook } from './events.ts'
 
-export default async function hooksPlugin (app: FastifyInstance): Promise<void> {
+async function hooksPlugin (app: FastifyInstance): Promise<void> {
   // Get hook by ID — prefer non-disposed hooks (logical delete keeps old rows)
   app.get('/api/v1/apps/:appId/hooks/:hookId', async (request) => {
     const { hookId } = request.params as { hookId: string }
@@ -70,3 +71,5 @@ export default async function hooksPlugin (app: FastifyInstance): Promise<void> 
     return { data, cursor: nextCursor, hasMore }
   })
 }
+
+export default fp(hooksPlugin, { name: 'hooks', dependencies: ['auth'] })
