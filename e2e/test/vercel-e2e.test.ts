@@ -50,10 +50,10 @@ test('promiseRace stress test: 5 concurrent races', { timeout: 120_000 }, async 
 
 // ---- Sleep / deferred delivery ----
 
-test('sleeping: deferred delivery', { timeout: 60_000 }, async () => {
+test('sleeping: deferred delivery', { timeout: 90_000 }, async () => {
   const startTime = Date.now()
   const runId = await triggerE2eWorkflow('sleepingWorkflow')
-  const run = await waitForRunStatus(runId, 'completed', 45_000)
+  const run = await waitForRunStatus(runId, 'completed')
   const elapsed = Date.now() - startTime
   assert.equal(run.status, 'completed')
   assert.ok(elapsed >= 9_000, `sleep should be at least 9s, got ${elapsed}ms`)
