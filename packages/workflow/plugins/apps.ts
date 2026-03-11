@@ -10,20 +10,15 @@ async function appsPlugin (app: FastifyInstance): Promise<void> {
     const { appId } = request.body as { appId: string }
     if (!appId) throw new BadRequest('appId is required')
 
-    try {
-      await app.pg.query(
-        'INSERT INTO workflow_applications (app_id) VALUES ($1)',
-        [appId]
-      )
+    const result = await app.pg.query(
+      `INSERT INTO workflow_applications (app_id) VALUES ($1)
+       ON CONFLICT (app_id) DO NOTHING
+       RETURNING app_id`,
+      [appId]
+    )
 
-      reply.code(201)
-      return { appId }
-    } catch (err: any) {
-      if (err.code === '23505') {
-        throw new BadRequest(`application ${appId} already exists`)
-      }
-      throw err
-    }
+    reply.code(result.rows.length > 0 ? 201 : 200)
+    return { appId }
   })
 
   // Create K8s binding
