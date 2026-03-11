@@ -1,17 +1,84 @@
 import pg from 'pg'
+import createLeaderElector from '@platformatic/leader'
 import { routeMessage } from './router.ts'
 import { dispatchMessage, type DispatchResult } from './dispatcher.ts'
 import { getRetryDelay, isMaxAttempts } from './retry.ts'
 
-const ORPHAN_CHECK_INTERVAL = 60_000 // 60 seconds
+const ORPHAN_CHECK_INTERVAL = 60_000
+const LEADER_LOCK_ID = 42424242
+const DEFERRED_CHANNEL = 'deferred_messages'
 
-export function createPoller (pool: pg.Pool) {
+export function createPoller (pool: pg.Pool, connectionString: string, log: any) {
   let stopped = false
   let deferredTimer: ReturnType<typeof setTimeout> | null = null
   let orphanTimer: ReturnType<typeof setInterval> | null = null
   let listenClient: pg.Client | null = null
   let executing = false
   let pendingNotify = false
+
+  // Leader election only — dummy channel required by @platformatic/leader@0.1.0
+  // TODO: remove channels once @platformatic/leader supports election-only mode
+  const leader = createLeaderElector({
+    pool,
+    lock: LEADER_LOCK_ID,
+    log,
+    channels: [{ channel: '__leader_noop__', onNotification: () => {} }],
+    onLeadershipChange: (isLeader: boolean) => {
+      if (isLeader) {
+        startPolling()
+      } else {
+        stopPolling()
+      }
+    },
+  })
+
+  function startPolling (): void {
+    stopped = false
+    setupListener()
+    orphanTimer = setInterval(checkOrphans, ORPHAN_CHECK_INTERVAL)
+    execute()
+  }
+
+  function stopPolling (): void {
+    stopped = true
+    if (deferredTimer) { clearTimeout(deferredTimer); deferredTimer = null }
+    if (orphanTimer) { clearInterval(orphanTimer); orphanTimer = null }
+    teardownListener()
+  }
+
+  // Dedicated LISTEN client — not from the pool
+  function setupListener (): void {
+    listenClient = new pg.Client({ connectionString })
+    listenClient.on('error', (err) => {
+      log.error({ err }, 'LISTEN connection error')
+      if (!stopped && leader.isLeader()) {
+        setTimeout(() => setupListener(), 1000)
+      }
+    })
+
+    listenClient.connect()
+      .then(() => listenClient!.query(`LISTEN "${DEFERRED_CHANNEL}"`))
+      .then(() => {
+        log.info({ channel: DEFERRED_CHANNEL }, 'Listening to notification channel')
+      })
+      .catch((err) => {
+        log.error({ err }, 'Failed to setup LISTEN connection')
+        if (!stopped && leader.isLeader()) {
+          setTimeout(() => setupListener(), 1000)
+        }
+      })
+
+    listenClient.on('notification', () => {
+      execute()
+    })
+  }
+
+  function teardownListener (): void {
+    if (listenClient) {
+      listenClient.end().catch(() => {})
+      listenClient = null
+    }
+  }
 
   async function execute (): Promise<void> {
     if (stopped) return
@@ -26,7 +93,6 @@ export function createPoller (pool: pg.Pool) {
       await executeOnce()
     } finally {
       executing = false
-      // If a NOTIFY arrived during execution, re-run to pick up new messages
       if (pendingNotify && !stopped) {
         pendingNotify = false
         setImmediate(() => execute())
@@ -37,66 +103,59 @@ export function createPoller (pool: pg.Pool) {
   async function executeOnce (): Promise<void> {
     const client = await pool.connect()
     try {
-      const lockResult = await client.query('SELECT pg_try_advisory_lock(42424242)')
-      if (!lockResult.rows[0].pg_try_advisory_lock) {
-        return
-      }
+      // 1. Promote deferred messages that are due
+      await client.query(
+        `UPDATE workflow_queue_messages
+         SET status = 'pending'
+         WHERE status = 'deferred' AND deliver_at <= NOW()`
+      )
 
-      try {
-        // 1. Promote deferred messages that are due
-        await client.query(
-          `UPDATE workflow_queue_messages
-           SET status = 'pending'
-           WHERE status = 'deferred' AND deliver_at <= NOW()`
-        )
+      // 2. Retry failed messages that are due
+      await client.query(
+        `UPDATE workflow_queue_messages
+         SET status = 'pending'
+         WHERE status = 'failed' AND next_retry_at <= NOW() AND attempts < 10`
+      )
 
-        // 2. Retry failed messages that are due
-        await client.query(
-          `UPDATE workflow_queue_messages
-           SET status = 'pending'
-           WHERE status = 'failed' AND next_retry_at <= NOW() AND attempts < 10`
-        )
+      // 3. Dispatch all pending messages
+      const pending = await client.query(
+        `SELECT * FROM workflow_queue_messages
+         WHERE status = 'pending'
+         ORDER BY created_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 100`
+      )
 
-        // 3. Dispatch all pending messages
-        const pending = await client.query(
-          `SELECT * FROM workflow_queue_messages
-           WHERE status = 'pending'
-           ORDER BY created_at ASC
-           FOR UPDATE SKIP LOCKED
-           LIMIT 100`
-        )
-
-        // Dispatch all messages concurrently (HTTP calls in parallel)
-        // then process results sequentially (DB updates on same client)
-        const dispatchResults = await Promise.all(
-          pending.rows.map(async (msg: any) => {
-            const route = await routeMessage(pool, msg.application_id, msg.deployment_version, msg.queue_name)
-            if (!route) {
-              return { msg, route: null, result: null }
-            }
-            const result = await dispatchMessage(
-              route.url, msg.queue_name, msg.id, msg.payload, msg.attempts
-            )
-            console.log(`[POLLER] dispatched msgId=${msg.id} queue=${msg.queue_name} status=${result.statusCode} timeoutSeconds=${result.timeoutSeconds} success=${result.success}`)
-            return { msg, route, result }
-          })
-        )
-
-        for (const { msg, route, result } of dispatchResults) {
-          if (!route || !result) {
-            await handleNoRoute(client, msg)
-            continue
+      // Dispatch all messages concurrently (HTTP calls in parallel)
+      // then process results sequentially (DB updates on same client)
+      const dispatchResults = await Promise.all(
+        pending.rows.map(async (msg: any) => {
+          const route = await routeMessage(pool, msg.application_id, msg.deployment_version, msg.queue_name)
+          if (!route) {
+            return { msg, route: null, result: null }
           }
-          await handleDispatchResult(client, msg, result)
-        }
+          const result = await dispatchMessage(
+            route.url, msg.queue_name, msg.id, msg.payload, msg.attempts
+          )
+          log.info(`[POLLER] dispatched msgId=${msg.id} queue=${msg.queue_name} status=${result.statusCode} timeoutSeconds=${result.timeoutSeconds} success=${result.success}`)
+          return { msg, route, result }
+        })
+      )
 
-        // 4. Schedule next wake-up based on earliest deferred message
-        scheduleNextWakeup(pool)
-      } finally {
-        await client.query('SELECT pg_advisory_unlock(42424242)')
+      for (const { msg, route, result } of dispatchResults) {
+        if (!route || !result) {
+          await handleNoRoute(client, msg)
+          continue
+        }
+        await handleDispatchResult(client, msg, result)
       }
+
+      // 4. Schedule next wake-up based on earliest deferred/retry message
+      // Fire-and-forget: must not block executeOnce so pendingNotify re-runs
+      // are not delayed, and so re-runs use their own pool connection for the query
+      scheduleNextWakeup()
     } catch (err) {
-      console.error('Executor error:', err)
+      log.error({ err }, 'Executor error')
     } finally {
       client.release()
     }
@@ -107,46 +166,37 @@ export function createPoller (pool: pg.Pool) {
 
     const client = await pool.connect()
     try {
-      const lockResult = await client.query('SELECT pg_try_advisory_lock(42424242)')
-      if (!lockResult.rows[0].pg_try_advisory_lock) {
-        return
-      }
+      const orphans = await client.query(
+        `SELECT id, application_id, deployment_id FROM workflow_runs
+         WHERE status = 'running'
+           AND updated_at < NOW() - INTERVAL '15 minutes'
+           AND id NOT IN (
+             SELECT DISTINCT run_id FROM workflow_queue_messages
+             WHERE status IN ('pending', 'deferred', 'failed')
+           )
+         LIMIT 10`
+      )
 
-      try {
-        const orphans = await client.query(
-          `SELECT id, application_id, deployment_id FROM workflow_runs
-           WHERE status = 'running'
-             AND updated_at < NOW() - INTERVAL '15 minutes'
-             AND id NOT IN (
-               SELECT DISTINCT run_id FROM workflow_queue_messages
-               WHERE status IN ('pending', 'deferred', 'failed')
-             )
-           LIMIT 10`
+      for (const orphan of orphans.rows) {
+        await client.query(
+          `UPDATE workflow_runs SET status = 'failed', error = $2, completed_at = NOW(), updated_at = NOW()
+           WHERE id = $1`,
+          [orphan.id, JSON.stringify({ message: 'Run orphaned: no activity for 15 minutes', code: 'ORPHANED' })]
         )
-
-        for (const orphan of orphans.rows) {
-          await client.query(
-            `UPDATE workflow_runs SET status = 'failed', error = $2, completed_at = NOW(), updated_at = NOW()
-             WHERE id = $1`,
-            [orphan.id, JSON.stringify({ message: 'Run orphaned: no activity for 15 minutes', code: 'ORPHANED' })]
-          )
-          await client.query(
-            `INSERT INTO workflow_events (run_id, application_id, event_type, event_data)
-             VALUES ($1, $2, 'run_failed', NULL)`,
-            [orphan.id, orphan.application_id]
-          )
-        }
-      } finally {
-        await client.query('SELECT pg_advisory_unlock(42424242)')
+        await client.query(
+          `INSERT INTO workflow_events (run_id, application_id, event_type, event_data)
+           VALUES ($1, $2, 'run_failed', NULL)`,
+          [orphan.id, orphan.application_id]
+        )
       }
     } catch (err) {
-      console.error('Orphan check error:', err)
+      log.error({ err }, 'Orphan check error')
     } finally {
       client.release()
     }
   }
 
-  async function scheduleNextWakeup (pool: pg.Pool): Promise<void> {
+  async function scheduleNextWakeup (): Promise<void> {
     if (stopped) return
     if (deferredTimer) {
       clearTimeout(deferredTimer)
@@ -155,9 +205,14 @@ export function createPoller (pool: pg.Pool) {
 
     try {
       const result = await pool.query(
-        `SELECT EXTRACT(EPOCH FROM (MIN(deliver_at) - NOW())) AS secs
-         FROM workflow_queue_messages
-         WHERE status = 'deferred' AND deliver_at > NOW()`
+        `SELECT EXTRACT(EPOCH FROM (MIN(next_time) - NOW())) AS secs
+         FROM (
+           SELECT deliver_at AS next_time FROM workflow_queue_messages
+             WHERE status = 'deferred' AND deliver_at > NOW()
+           UNION ALL
+           SELECT next_retry_at AS next_time FROM workflow_queue_messages
+             WHERE status = 'failed' AND next_retry_at > NOW() AND attempts < 10
+         ) t`
       )
 
       const secs = result.rows[0]?.secs
@@ -169,27 +224,8 @@ export function createPoller (pool: pg.Pool) {
         }, ms)
       }
     } catch (err) {
-      console.error('Schedule wakeup error:', err)
+      log.error({ err }, 'Schedule wakeup error')
     }
-  }
-
-  async function setupListener (connectionString: string): Promise<void> {
-    listenClient = new pg.Client({ connectionString })
-    listenClient.on('error', (err) => {
-      console.error('LISTEN connection error:', err)
-      // Attempt reconnection
-      if (!stopped) {
-        setTimeout(() => setupListener(connectionString), 1000)
-      }
-    })
-
-    await listenClient.connect()
-    await listenClient.query('LISTEN deferred_messages')
-
-    listenClient.on('notification', () => {
-      // Wake up executor immediately on NOTIFY
-      execute()
-    })
   }
 
   async function handleNoRoute (client: pg.PoolClient, msg: any): Promise<void> {
@@ -222,10 +258,8 @@ export function createPoller (pool: pg.Pool) {
           [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
             JSON.stringify(msg.payload), delaySecs]
         )
-        // NOTIFY so executor reschedules its timer
-        await client.query("SELECT pg_notify('deferred_messages', '')")
+        await client.query("SELECT pg_notify('deferred_messages', '{}')")
       } else if (typeof result.timeoutSeconds === 'number' && result.timeoutSeconds === 0) {
-        // Immediate re-dispatch (e.g. hook conflict) — insert as pending
         await client.query(
           `INSERT INTO workflow_queue_messages
            (queue_name, run_id, deployment_version, application_id, payload, status)
@@ -233,7 +267,7 @@ export function createPoller (pool: pg.Pool) {
           [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
             JSON.stringify(msg.payload)]
         )
-        await client.query("SELECT pg_notify('deferred_messages', '')")
+        await client.query("SELECT pg_notify('deferred_messages', '{}')")
       }
       await client.query(
         `UPDATE workflow_queue_messages SET status = 'delivered', delivered_at = NOW()
@@ -262,42 +296,15 @@ export function createPoller (pool: pg.Pool) {
   }
 
   return {
-    async start (connectionString?: string) {
+    start () {
       stopped = false
-
-      // Set up LISTEN/NOTIFY if connection string provided
-      if (connectionString) {
-        try {
-          await setupListener(connectionString)
-        } catch (err) {
-          console.error('Failed to setup LISTEN connection:', err)
-        }
-      }
-
-      // Run immediately on start to catch up
-      execute()
-
-      // Periodic orphan detection
-      orphanTimer = setInterval(checkOrphans, ORPHAN_CHECK_INTERVAL)
+      leader.start()
     },
     async stop () {
       stopped = true
-      if (deferredTimer) {
-        clearTimeout(deferredTimer)
-        deferredTimer = null
-      }
-      if (orphanTimer) {
-        clearInterval(orphanTimer)
-        orphanTimer = null
-      }
-      if (listenClient) {
-        try {
-          await listenClient.end()
-        } catch {
-          // ignore close errors
-        }
-        listenClient = null
-      }
+      stopPolling()
+      teardownListener()
+      await leader.stop()
     },
   }
 }

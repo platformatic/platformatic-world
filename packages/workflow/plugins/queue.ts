@@ -58,7 +58,7 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
       const messageId = result.rows[0].id
 
       // Wake the executor so it can recalculate its timer
-      await app.pg.query("SELECT pg_notify('deferred_messages', '')")
+      await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
 
       reply.code(201)
       return {
@@ -88,7 +88,7 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
     const messageId = insertResult.rows[0].id
 
     // Wake the poller to dispatch this message asynchronously
-    await app.pg.query("SELECT pg_notify('deferred_messages', '')")
+    await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
 
     reply.code(201)
     return { messageId: `msg_${messageId}` }
