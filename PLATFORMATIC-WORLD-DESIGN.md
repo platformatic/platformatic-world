@@ -527,9 +527,9 @@ The `@platformatic/world` package (in `packages/world/`) exports `createWorld()`
 
 **Standalone / local dev:** Only `PLT_WORLD_SERVICE_URL` is required. The Workflow Service runs in single-tenant mode (no auth). The developer starts the service, sets the URL, and runs their app.
 
-**K8s with ICC:** All env vars are wired automatically by the Helm Deployment template using the Kubernetes Downward API — `PLT_WORLD_APP_ID` from `app.kubernetes.io/name` label, `PLT_WORLD_DEPLOYMENT_VERSION` from `plt.dev/version` label. No manual env var configuration is needed, and there is a single source of truth (the labels). The env vars are available at pod startup without contacting ICC — this is important because watt-extra can start the runtime before ICC is reachable. Auth uses K8s service account tokens.
+**K8s with ICC:** `WORKFLOW_TARGET_WORLD` and `PLT_WORLD_SERVICE_URL` are set in the app's Dockerfile. `PLT_WORLD_APP_ID` and `PLT_WORLD_DEPLOYMENT_VERSION` are optional (default from `package.json` name and `local` respectively) — they can be derived from pod labels via Downward API if needed. Auth uses K8s service account tokens (multi-tenant mode) — no key provisioning needed.
 
-Watt-extra's world plugin checks if `PLT_WORLD_SERVICE_URL` is set, and if so, sets `WORKFLOW_TARGET_WORLD=@platformatic/world` so the DevKit discovers our world. No changes to the watt runtime or the Vercel DevKit are needed.
+`WORKFLOW_TARGET_WORLD=@platformatic/world` and `PLT_WORLD_SERVICE_URL` are set in the app's Dockerfile (or `.env`). No watt-extra, watt runtime, or Vercel DevKit changes are needed.
 
 ---
 
