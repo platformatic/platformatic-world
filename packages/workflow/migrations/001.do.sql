@@ -79,6 +79,7 @@ CREATE TABLE workflow_steps (
 );
 
 CREATE INDEX idx_ws_run_id ON workflow_steps (run_id);
+CREATE UNIQUE INDEX idx_ws_unique_step ON workflow_steps (run_id, correlation_id, step_name);
 
 CREATE TABLE workflow_hooks (
   id              VARCHAR PRIMARY KEY,
