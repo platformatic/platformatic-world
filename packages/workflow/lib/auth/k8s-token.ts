@@ -36,6 +36,14 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
     }
   }
 
+  // Read this pod's own SA token to authenticate with the K8s API server
+  let ownToken: string | undefined
+  try {
+    ownToken = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf-8').trim()
+  } catch {
+    // Token not available
+  }
+
   return async function validateK8sToken (token: string): Promise<K8sValidationResult | null> {
     // Check cache
     const cached = cache.get(token)
@@ -50,11 +58,16 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
       spec: { token },
     })
 
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (ownToken) {
+      headers.Authorization = `Bearer ${ownToken}`
+    }
+
     const response = await undiciRequest(
       `${config.apiServer}/apis/authentication.k8s.io/v1/tokenreviews`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: reviewBody,
         dispatcher,
       }

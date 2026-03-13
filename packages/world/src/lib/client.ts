@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { Pool } from 'undici'
+
+const K8S_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 
 export interface ClientConfig {
   serviceUrl: string
@@ -29,11 +32,25 @@ export class HttpClient {
   #pool: Pool
   #baseUrl: string
   #appId: string
+  #token: string | null
 
   constructor (config: ClientConfig) {
     this.#pool = new Pool(config.serviceUrl)
     this.#baseUrl = `/api/v1/apps/${config.appId}`
     this.#appId = config.appId
+    this.#token = null
+    try {
+      this.#token = readFileSync(K8S_TOKEN_PATH, 'utf8').trim()
+    } catch {
+      // Not running in K8s — single-tenant mode, no auth needed
+    }
+  }
+
+  #authHeaders (): Record<string, string> {
+    if (this.#token) {
+      return { authorization: `Bearer ${this.#token}` }
+    }
+    return {}
   }
 
   async post (path: string, body: unknown, query?: Record<string, string | undefined>): Promise<any> {
@@ -46,7 +63,7 @@ export class HttpClient {
       fullPath = `${url.pathname}${url.search}`
     }
 
-    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    const headers: Record<string, string> = { 'content-type': 'application/json', ...this.#authHeaders() }
 
     const response = await this.#pool.request({
       method: 'POST',
@@ -79,6 +96,7 @@ export class HttpClient {
     const response = await this.#pool.request({
       method: 'GET',
       path: `${url.pathname}${url.search}`,
+      headers: this.#authHeaders(),
     })
 
     if (response.statusCode >= 400) {
@@ -90,7 +108,7 @@ export class HttpClient {
   }
 
   async put (path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<any> {
-    const putHeaders: Record<string, string> = { 'content-type': 'application/json', ...extraHeaders }
+    const putHeaders: Record<string, string> = { 'content-type': 'application/json', ...this.#authHeaders(), ...extraHeaders }
 
     const response = await this.#pool.request({
       method: 'PUT',
@@ -123,6 +141,7 @@ export class HttpClient {
     const response = await this.#pool.request({
       method: 'GET',
       path: `${url.pathname}${url.search}`,
+      headers: this.#authHeaders(),
     })
 
     if (response.statusCode >= 400) {
@@ -148,6 +167,7 @@ export class HttpClient {
     const response = await this.#pool.request({
       method: 'GET',
       path: `${url.pathname}${url.search}`,
+      headers: this.#authHeaders(),
     })
 
     if (response.statusCode >= 400) {

@@ -300,22 +300,36 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           const eventData = body.eventData || {}
           const input = encodeData(eventData.input)
 
-          await client.query(
+          const insertResult = await client.query(
             `INSERT INTO workflow_steps (id, run_id, application_id, correlation_id, step_name, status, input, spec_version)
-             VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)`,
+             VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
+             ON CONFLICT (run_id, correlation_id, step_name) DO NOTHING
+             RETURNING id`,
             [stepId, rawRunId, appId, body.correlationId, eventData.stepName, input, body.specVersion || null]
           )
 
+          // If the insert was a no-op (duplicate), fetch the existing step
+          let actualStepId = insertResult.rows[0]?.id
+          if (!actualStepId) {
+            const existing = await client.query(
+              'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND step_name = $3 LIMIT 1',
+              [rawRunId, body.correlationId, eventData.stepName]
+            )
+            actualStepId = existing.rows[0]?.id
+          }
+
           const eventRow = await insertEvent(client, rawRunId, appId, body)
-          const stepRow = (await client.query('SELECT * FROM workflow_steps WHERE id = $1', [stepId])).rows[0]
-          result = { event: formatEvent(eventRow, resolveData), step: formatStep(stepRow, resolveData) }
+          const stepRow = actualStepId
+            ? (await client.query('SELECT * FROM workflow_steps WHERE id = $1', [actualStepId])).rows[0]
+            : null
+          result = { event: formatEvent(eventRow, resolveData), step: stepRow ? formatStep(stepRow, resolveData) : undefined }
           break
         }
 
         case 'step_started': {
-          // Find step by correlation_id + run_id
+          // Find step by correlation_id + run_id (LIMIT 1 to handle any legacy duplicates)
           const stepResult = await client.query(
-            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3',
+            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
             [rawRunId, body.correlationId, appId]
           )
 
@@ -364,7 +378,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         case 'step_completed': {
           const resultData = body.eventData?.result ? encodeData(body.eventData.result) : null
           const stepResult = await client.query(
-            'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3',
+            'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
             [rawRunId, body.correlationId, appId]
           )
           if (stepResult.rows.length > 0) {
@@ -387,7 +401,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
             ? { message: String(body.eventData.error || ''), stack: body.eventData.stack }
             : null
           const stepResult = await client.query(
-            'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3',
+            'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
             [rawRunId, body.correlationId, appId]
           )
           if (stepResult.rows.length > 0) {
@@ -411,7 +425,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
             : null
           const retryAfter = body.eventData?.retryAfter ? new Date(body.eventData.retryAfter) : null
           const stepResult = await client.query(
-            'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3',
+            'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
             [rawRunId, body.correlationId, appId]
           )
           if (stepResult.rows.length > 0) {
@@ -478,6 +492,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
             if (hookResult.rows.length > 0) hookRow = hookResult.rows[0]
           }
           const eventRow = await insertEvent(client, rawRunId, appId, body)
+
           result = { event: formatEvent(eventRow, resolveData), hook: hookRow ? formatHook(hookRow) : undefined }
           break
         }

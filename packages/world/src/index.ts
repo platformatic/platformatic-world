@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { Agent } from 'undici'
 import type { World } from '@workflow/world'
 import { HttpClient } from './lib/client.ts'
 import type { ClientConfig } from './lib/client.ts'
@@ -47,6 +48,44 @@ export interface CreateWorldOptions {
   deploymentVersion: string
 }
 
+const SA_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
+const SA_NAMESPACE_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
+const SA_CA_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+
+function isRunningInK8s (): boolean {
+  try {
+    readFileSync(SA_TOKEN_PATH)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function readVersionFromK8sApi (): Promise<string | undefined> {
+  try {
+    const token = readFileSync(SA_TOKEN_PATH, 'utf8').trim()
+    const namespace = readFileSync(SA_NAMESPACE_PATH, 'utf8').trim()
+    const podName = process.env.HOSTNAME
+    if (!podName) return undefined
+
+    const ca = readFileSync(SA_CA_PATH)
+    const dispatcher = new Agent({ connect: { ca } })
+    const res = await fetch(
+      `https://kubernetes.default.svc/api/v1/namespaces/${namespace}/pods/${podName}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        dispatcher,
+      } as RequestInit
+    )
+
+    if (!res.ok) return undefined
+    const pod = await res.json() as { metadata?: { labels?: Record<string, string> } }
+    return pod?.metadata?.labels?.['plt.dev/version'] || undefined
+  } catch {
+    return undefined
+  }
+}
+
 function readAppName (): string {
   try {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
@@ -63,9 +102,20 @@ export function createWorld (options?: Partial<CreateWorldOptions>): World {
   }
 
   const appId = options?.appId || process.env.PLT_WORLD_APP_ID || readAppName()
-  const deploymentVersion = options?.deploymentVersion || process.env.PLT_WORLD_DEPLOYMENT_VERSION || 'local'
+  const explicitVersion = options?.deploymentVersion || process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  const config = { serviceUrl, appId, deploymentVersion: explicitVersion || 'local' }
+  const world = createPlatformaticWorld(config)
 
-  return createPlatformaticWorld({ serviceUrl, appId, deploymentVersion })
+  if (!explicitVersion && isRunningInK8s()) {
+    const originalStart = world.start!
+    world.start = async function () {
+      const version = await readVersionFromK8sApi()
+      if (version) config.deploymentVersion = version
+      return originalStart.call(this)
+    }
+  }
+
+  return world
 }
 
 export { HttpClient } from './lib/client.ts'

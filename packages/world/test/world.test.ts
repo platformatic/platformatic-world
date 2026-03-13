@@ -89,3 +89,43 @@ test('works without optional fields', async () => {
   assert.equal(typeof world.queue, 'function')
   await world.close()
 })
+
+test('falls back to local when not in K8s and no env var', async () => {
+  const originalUrl = process.env.PLT_WORLD_SERVICE_URL
+  const originalVersion = process.env.PLT_WORLD_DEPLOYMENT_VERSION
+
+  process.env.PLT_WORLD_SERVICE_URL = 'http://localhost:9999'
+  delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+
+  try {
+    const world = createWorld()
+    const deploymentId = await world.getDeploymentId()
+    assert.equal(deploymentId, 'local')
+    await world.close()
+  } finally {
+    if (originalUrl) process.env.PLT_WORLD_SERVICE_URL = originalUrl
+    else delete process.env.PLT_WORLD_SERVICE_URL
+    if (originalVersion) process.env.PLT_WORLD_DEPLOYMENT_VERSION = originalVersion
+    else delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  }
+})
+
+test('env var takes precedence over K8s API lookup', async () => {
+  const originalUrl = process.env.PLT_WORLD_SERVICE_URL
+  const originalVersion = process.env.PLT_WORLD_DEPLOYMENT_VERSION
+
+  process.env.PLT_WORLD_SERVICE_URL = 'http://localhost:9999'
+  process.env.PLT_WORLD_DEPLOYMENT_VERSION = 'from-env'
+
+  try {
+    const world = createWorld()
+    const deploymentId = await world.getDeploymentId()
+    assert.equal(deploymentId, 'from-env')
+    await world.close()
+  } finally {
+    if (originalUrl) process.env.PLT_WORLD_SERVICE_URL = originalUrl
+    else delete process.env.PLT_WORLD_SERVICE_URL
+    if (originalVersion) process.env.PLT_WORLD_DEPLOYMENT_VERSION = originalVersion
+    else delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  }
+})
