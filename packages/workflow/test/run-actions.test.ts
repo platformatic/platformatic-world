@@ -104,7 +104,7 @@ describe('run-actions', () => {
 
     // Verify queue message was created
     const messages = await ctx.app.pg.query(
-      `SELECT * FROM workflow_queue_messages WHERE run_id = $1`,
+      'SELECT * FROM workflow_queue_messages WHERE run_id = $1',
       [replayed.runId]
     )
     assert.equal(messages.rows.length, 1)

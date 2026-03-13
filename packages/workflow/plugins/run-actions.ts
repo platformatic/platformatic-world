@@ -146,17 +146,14 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
       [runId, appId]
     )
 
-    // For each cancelled wait, promote any deferred messages
-    for (const wait of result.rows) {
+    // Promote any deferred messages so steps resume
+    if (result.rows.length > 0) {
       await app.pg.query(
         `UPDATE workflow_queue_messages SET status = 'pending', deliver_at = NULL
          WHERE run_id = $1 AND application_id = $2 AND status = 'deferred'
            AND queue_name LIKE '__wkf_step_%'`,
         [runId, appId]
       )
-    }
-
-    if (result.rows.length > 0) {
       await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
     }
 
