@@ -17,6 +17,7 @@
     "@fastify/error": "^4.1.0",
     "@platformatic/leader": "^0.1.0",
     "@platformatic/service": "^3.40.0",
+    "devalue": "^5.6.4",
     "fastify": "^5.3.3",
     "fastify-plugin": "^5.1.0",
     "pg": "^8.16.0",

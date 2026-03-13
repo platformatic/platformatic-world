@@ -63,6 +63,9 @@ importers:
       '@platformatic/service':
         specifier: ^3.40.0
         version: 3.41.0(typescript@5.9.3)
+      devalue:
+        specifier: ^5.6.4
+        version: 5.6.4
       fastify:
         specifier: ^5.3.3
         version: 5.8.1
@@ -2465,6 +2468,9 @@ packages:
 
   devalue@5.6.3:
     resolution: {integrity: sha512-nc7XjUU/2Lb+SvEFVGcWLiKkzfw8+qHI7zn8WYXKkLMgfGSHbgCEaR6bJpev8Cm6Rmrb19Gfd/tZvGqx9is3wg==}
+
+  devalue@5.6.4:
+    resolution: {integrity: sha512-Gp6rDldRsFh/7XuouDbxMH3Mx8GMCcgzIb1pDTvNyn8pZGQ22u+Wa+lGV9dQCltFQ7uVw0MhRyb8XDskNFOReA==}
 
   doctrine@2.1.0:
     resolution: {integrity: sha512-35mSku4ZXK0vfCuHEDAwt55dg2jNajHZ1odvF+8SSr82EsZY4QmXfuWso8oEd8zRhVObSN18aM0CjSdoBX7zIw==}
@@ -7639,6 +7645,8 @@ snapshots:
     optional: true
 
   devalue@5.6.3: {}
+
+  devalue@5.6.4: {}
 
   doctrine@2.1.0:
     dependencies:

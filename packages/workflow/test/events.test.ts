@@ -1,7 +1,64 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { stringify as devalueStringify } from 'devalue'
 import { setupTest, teardownTest } from './helper.ts'
+import { decodeData, encodeData } from '../plugins/events.ts'
 import type { TestContext } from './helper.ts'
+
+describe('decodeData', () => {
+  it('should decode plain JSON buffers', () => {
+    const buf = Buffer.from(JSON.stringify({ hello: 'world' }))
+    assert.deepEqual(decodeData(buf), { hello: 'world' })
+  })
+
+  it('should return undefined for null', () => {
+    assert.equal(decodeData(null), undefined)
+  })
+
+  it('should return base64 for non-JSON binary', () => {
+    const buf = Buffer.from([0x00, 0x01, 0x02, 0x03])
+    assert.equal(typeof decodeData(buf), 'string')
+  })
+
+  it('should decode devl-prefixed devalue buffers', () => {
+    const obj = { version: 'v2', podId: 'pod-abc' }
+    const payload = devalueStringify(obj)
+    const buf = Buffer.concat([Buffer.from('devl'), Buffer.from(payload)])
+    assert.deepEqual(decodeData(buf), obj)
+  })
+
+  it('should decode base64 fields inside event data objects', () => {
+    // Simulate SDK: result is base64-encoded devl+devalue
+    const stepResult = { greeting: 'Hello World' }
+    const devlBuf = Buffer.concat([Buffer.from('devl'), Buffer.from(devalueStringify(stepResult))])
+    const resultBase64 = devlBuf.toString('base64')
+
+    const eventData = JSON.stringify({ result: resultBase64, stepName: 'myStep' })
+    const decoded = decodeData(Buffer.from(eventData)) as any
+    assert.deepEqual(decoded.result, stepResult)
+    assert.equal(decoded.stepName, 'myStep')
+  })
+
+  it('should decode base64 fields with plain JSON inside', () => {
+    const inner = { foo: 'bar' }
+    const innerBase64 = Buffer.from(JSON.stringify(inner)).toString('base64')
+    const outer = JSON.stringify({ output: innerBase64 })
+    const decoded = decodeData(Buffer.from(outer)) as any
+    assert.deepEqual(decoded.output, inner)
+  })
+
+  it('should not mangle non-base64 string fields', () => {
+    const data = JSON.stringify({ result: 'just a string', name: 'test' })
+    const decoded = decodeData(Buffer.from(data)) as any
+    assert.equal(decoded.name, 'test')
+  })
+
+  it('should round-trip through encodeData and decodeData', () => {
+    const obj = { count: 42, items: ['a', 'b'] }
+    const encoded = encodeData(obj)
+    assert.deepEqual(decodeData(encoded), obj)
+  })
+})
 
 describe('events', () => {
   let ctx: TestContext

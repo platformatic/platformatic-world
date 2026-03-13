@@ -1,6 +1,7 @@
 import fp from 'fastify-plugin'
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
+import { parse as devalueParse } from 'devalue'
 import { RunNotFound, BadRequest } from '../lib/errors.ts'
 import { checkRunQuota, checkEventQuota } from '../lib/quotas.ts'
 import type pg from 'pg'
@@ -20,15 +21,58 @@ function encodeData (data: unknown): Buffer | null {
   return Buffer.from(JSON.stringify(data))
 }
 
-function decodeData (buf: Buffer | null): unknown {
-  if (buf === null) return undefined
-  // Try to detect if it's JSON
-  if (buf[0] === 0x7b || buf[0] === 0x5b || buf[0] === 0x22) {
+// Fields within event data that may contain base64-encoded binary (from SDK serialization)
+const BINARY_EVENT_FIELDS = new Set(['result', 'output', 'input', 'payload', 'metadata'])
+
+// The Vercel workflow SDK serializes data as: 4-byte "devl" header + devalue-encoded payload.
+// devalue is a structured clone serializer that handles circular refs, Dates, Maps, etc.
+function tryDeserialize (buf: Buffer): unknown | undefined {
+  // Check for "devl" (devalue v1) prefix
+  if (buf.length > 4 && buf[0] === 0x64 && buf[1] === 0x65 && buf[2] === 0x76 && buf[3] === 0x6c) {
+    try {
+      return devalueParse(buf.subarray(4).toString('utf-8'))
+    } catch {
+      // not valid devalue payload
+    }
+  }
+  // Plain JSON
+  const first = buf[0]
+  if (first === 0x7b || first === 0x5b || first === 0x22) {
     try {
       return JSON.parse(buf.toString('utf-8'))
     } catch {
-      // Not JSON, return as base64
+      // not valid JSON
     }
+  }
+  return undefined
+}
+
+function tryDecodeBase64 (str: string): unknown {
+  if (str.length < 4 || /\s/.test(str)) return str
+  try {
+    const buf = Buffer.from(str, 'base64')
+    if (buf.toString('base64') !== str) return str
+    const parsed = tryDeserialize(buf)
+    if (parsed !== undefined) return parsed
+  } catch {
+    // Not valid base64 or not devalue/JSON
+  }
+  return str
+}
+
+function decodeData (buf: Buffer | null): unknown {
+  if (buf === null) return undefined
+  const parsed = tryDeserialize(buf)
+  if (parsed !== undefined) {
+    // Decode known binary fields within event data objects
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const key of BINARY_EVENT_FIELDS) {
+        if (typeof (parsed as any)[key] === 'string') {
+          (parsed as any)[key] = tryDecodeBase64((parsed as any)[key])
+        }
+      }
+    }
+    return parsed
   }
   return buf.toString('base64')
 }
