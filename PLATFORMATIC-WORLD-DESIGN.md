@@ -313,10 +313,12 @@ POST   /api/v1/apps/:appId/queue
   → Enqueues a message (immediate or deferred delivery)
 ```
 
-**Response (immediate delivery, dispatched):**
+**Response (immediate delivery):**
 ```json
-{ "messageId": "msg_42", "routedTo": "1.2.3" }
+{ "messageId": "msg_42" }
 ```
+
+Messages are inserted as `pending` and dispatched asynchronously by the poller, not synchronously with the enqueue call.
 
 **Response (deferred delivery):**
 ```json
@@ -347,7 +349,13 @@ DELETE /api/v1/apps/:appId/handlers/:podId
   → Deregisters a pod (on shutdown)
 ```
 
-When pods start, they register their queue handler endpoints with the Workflow Service. The service uses these for dispatching queue messages. Re-registration updates the existing record and refreshes the heartbeat timestamp.
+**Who registers handlers depends on the environment:**
+
+- **In K8s (with ICC):** ICC registers handlers when it discovers a workflow pod. ICC constructs cross-namespace FQDN URLs (`http://<service>.<namespace>.svc.cluster.local:<port>/.well-known/workflow/v1/{flow,step,webhook}`) so the Workflow Service can dispatch to app pods regardless of which namespace they run in. The world client's `start()` method detects it is running in K8s (via service account token at `/var/run/secrets/kubernetes.io/serviceaccount/token`) and **skips** handler registration to avoid creating duplicate entries with localhost URLs that would break cross-namespace dispatch.
+
+- **In local dev (no ICC):** The world client's `start()` registers handlers with `http://localhost:<PORT>` URLs so the Workflow Service running on the same machine can reach the app. This uses `process.env.PORT` for the app port and generates a pod ID from the process PID.
+
+Re-registration upserts on `(application_id, pod_id)` and refreshes the heartbeat timestamp.
 
 ### 6.12 Version Notification (Called by ICC)
 
@@ -398,7 +406,9 @@ GET    /metrics
   → Prometheus-compatible metrics (text/plain)
 ```
 
-Exposed metrics:
+The Workflow Service runs on Platformatic's Watt runtime with `metrics: true`, which exposes standard HTTP request metrics (request count, duration histograms, status codes) via the `/metrics` endpoint automatically.
+
+**Planned custom workflow metrics** (not yet instrumented):
 - **Counters:** `wf_events_created_total`, `wf_runs_created_total`, `wf_messages_dispatched_total`, `wf_messages_dead_lettered_total`, `wf_messages_retried_total`
 - **Gauges:** `wf_active_runs`, `wf_queue_depth`, `wf_db_pool_total`, `wf_db_pool_idle`
 - **Summaries:** `wf_request_duration_ms` (p50, p95, p99), `wf_queue_dispatch_duration_ms`
@@ -410,7 +420,30 @@ GET    /ready   → 200 if service is ready
 GET    /status  → 200 with service status
 ```
 
-### 6.17 Quotas
+### 6.17 Run Actions
+
+```
+POST   /api/v1/apps/:appId/runs/:runId/replay
+  → Creates a NEW run with the same workflow and input, targeting the ORIGINAL deployment version
+
+POST   /api/v1/apps/:appId/runs/:runId/cancel
+  → Cancels an active run (pending or running)
+
+POST   /api/v1/apps/:appId/runs/:runId/wake-up
+  → Cancels all pending sleeps (waits) for a run, promoting deferred messages to pending
+```
+
+**Replay** creates a new run that targets the **original deployment version**, not the current active version. This is critical for debugging and re-execution: a replayed v1 run executes on v1 pods with v1 code, even if v2 is now active. The replay operation is atomic (single transaction):
+1. Inserts a new `workflow_runs` row with the original's `deployment_id`, `workflow_name`, `input`, and `execution_context`
+2. Creates a `run_created` event with `replayedFrom: originalRunId` in the event data
+3. Enqueues a flow message with the original `deployment_version`
+4. Wakes the poller via `pg_notify`
+
+**Cancel** transitions a run to `cancelled` status, disposes hooks, completes waits, and dead-letters queued messages. Returns `400` if the run is already in a terminal state.
+
+**Wake-up** completes all `waiting` waits for a run and promotes any deferred step messages to `pending`, causing suspended sleeps to resume immediately.
+
+### 6.18 Quotas
 
 Per-app quotas are enforced on write operations:
 - **`max_runs`** (default 10,000): Maximum concurrent active runs. Checked on `run_created` events.
@@ -434,6 +467,27 @@ export function createPlatformaticWorld (config: PlatformaticWorldConfig) {
     ...createQueue(client, config),
     ...createStreamer(client),
     getEncryptionKeyForRun: createEncryption(client),
+    async start () {
+      // In K8s, ICC registers queue handlers with proper FQDN URLs
+      // for cross-namespace dispatch.  Registering here with localhost
+      // would create a duplicate handler that fails when picked.
+      if (isRunningInK8s()) return
+
+      // Local dev — register with localhost so the workflow service
+      // running on the same machine can reach us.
+      const port = process.env.PORT
+      if (!port) return
+      const baseUrl = `http://localhost:${port}`
+      await client.post('/handlers', {
+        podId: process.env.PLT_WORLD_POD_ID || `plt-world-${process.pid}`,
+        deploymentVersion: config.deploymentVersion,
+        endpoints: {
+          workflow: `${baseUrl}/.well-known/workflow/v1/flow`,
+          step: `${baseUrl}/.well-known/workflow/v1/step`,
+          webhook: `${baseUrl}/.well-known/workflow/v1/webhook`,
+        },
+      })
+    },
     async close () {
       await client.close()
     },
@@ -442,6 +496,8 @@ export function createPlatformaticWorld (config: PlatformaticWorldConfig) {
 ```
 
 The `HttpClient` uses an undici `Pool` for connection reuse and sends Bearer token authentication on every request.
+
+The `isRunningInK8s()` function checks for the presence of a K8s service account token at `/var/run/secrets/kubernetes.io/serviceaccount/token` (overridable via `PLT_WORLD_SA_PATH` for testing).
 
 ### 7.1 Storage
 
@@ -523,13 +579,64 @@ The `@platformatic/world` package (in `packages/world/`) exports `createWorld()`
 
 - `PLT_WORLD_SERVICE_URL` — Workflow Service URL (**required**)
 - `PLT_WORLD_APP_ID` — Application ID (optional, defaults from `package.json` name)
-- `PLT_WORLD_DEPLOYMENT_VERSION` — Deployment version for queue routing (optional, defaults to `local`)
+- `PLT_WORLD_DEPLOYMENT_VERSION` — Deployment version for queue routing (optional, see detection chain below)
 
 **Standalone / local dev:** Only `PLT_WORLD_SERVICE_URL` is required. The Workflow Service runs in single-tenant mode (no auth). The developer starts the service, sets the URL, and runs their app.
 
-**K8s with ICC:** `WORKFLOW_TARGET_WORLD` and `PLT_WORLD_SERVICE_URL` are set in the app's Dockerfile. `PLT_WORLD_APP_ID` and `PLT_WORLD_DEPLOYMENT_VERSION` are optional (default from `package.json` name and `local` respectively) — they can be derived from pod labels via Downward API if needed. Auth uses K8s service account tokens (multi-tenant mode) — no key provisioning needed.
+**K8s with ICC:** `WORKFLOW_TARGET_WORLD` and `PLT_WORLD_SERVICE_URL` are set in the app's Dockerfile. `PLT_WORLD_APP_ID` defaults from `package.json` name. Auth uses K8s service account tokens (multi-tenant mode) — no key provisioning needed.
 
 `WORKFLOW_TARGET_WORLD=@platformatic/world` and `PLT_WORLD_SERVICE_URL` are set in the app's Dockerfile (or `.env`). No watt-extra, watt runtime, or Vercel DevKit changes are needed.
+
+### 7.6 Deployment Version Detection
+
+`createWorld()` resolves the deployment version through a priority chain:
+
+1. **`PLT_WORLD_DEPLOYMENT_VERSION` env var** — if set, used directly (optional override)
+2. **K8s API pod label** — reads `plt.dev/version` from the pod's own metadata at startup via the K8s API
+3. **Fallback** — `'local'` (if not in K8s or API call fails)
+
+The K8s API detection works as follows: if no explicit version is provided and the pod is running in K8s (detected via the service account token), `createWorld()` wraps the `start()` method to call the K8s API before proceeding:
+
+```typescript
+if (!explicitVersion && isRunningInK8s()) {
+  const originalStart = world.start!
+  world.start = async function () {
+    const version = await readVersionFromK8sApi()
+    if (version) config.deploymentVersion = version
+    return originalStart.call(this)
+  }
+}
+```
+
+`readVersionFromK8sApi()` reads the service account token, namespace, and CA certificate from the SA mount, then calls `GET /api/v1/namespaces/{namespace}/pods/{HOSTNAME}` on `kubernetes.default.svc` to retrieve the pod's labels.
+
+**RBAC requirement:** The pod's service account must have `get` permission on `pods` in its namespace. Without this, the K8s API returns 403 and the version falls back to `'local'`, which breaks queue message routing (messages tagged `'local'` won't match the ICC-registered version). This RBAC is a **customer responsibility** — it must be applied in each namespace where workflow apps are deployed, since apps typically run in their own namespaces (not the `platformatic` namespace where ICC is installed):
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: <app-namespace>
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: <sa-name>-pod-reader
+  namespace: <app-namespace>
+subjects:
+- kind: ServiceAccount
+  name: <sa-name>
+  namespace: <app-namespace>
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+```
 
 ---
 
@@ -741,6 +848,7 @@ CREATE TABLE workflow_hooks (
   owner_id        VARCHAR NOT NULL DEFAULT '',
   project_id      VARCHAR NOT NULL DEFAULT '',
   environment     VARCHAR NOT NULL DEFAULT '',
+  is_webhook      BOOLEAN NOT NULL DEFAULT FALSE,
   metadata        BYTEA,
   spec_version    INTEGER,
   status          VARCHAR NOT NULL DEFAULT 'pending',
@@ -791,7 +899,7 @@ CREATE INDEX idx_wsc_run ON workflow_stream_chunks (run_id);
 - **`spec_version INTEGER`**: Version numbers are numeric.
 - **`output BYTEA`** (not `result JSONB`): Same rationale as input — opaque application data.
 - **`workflow_waits` table**: Tracks sleep/waitForEvent suspensions separately from hooks, giving the draining checker visibility into all suspension types.
-- **`workflow_hooks` lifecycle**: The `status` column tracks `pending` → `received` → `disposed`, with `received_at` and `disposed_at` timestamps for observability.
+- **`workflow_hooks` lifecycle**: The `status` column tracks `pending` → `received` → `disposed`, with `received_at` and `disposed_at` timestamps for observability. The `is_webhook` column distinguishes webhook hooks (created via `createWebhook()`) from programmatic hooks (created via `createHook()`).
 
 ### 9.3 Queue Tables
 
@@ -931,9 +1039,82 @@ ICC deploys and manages the Workflow Service as cluster infrastructure:
 - **Health monitoring:** ICC checks the service's health endpoint and restarts it if unhealthy.
 - **Database provisioning:** ICC provisions the Workflow Service's PostgreSQL database (or the service connects to a pre-existing instance via configuration).
 
-### 11.2 Draining Checks
+### 11.2 Handler Registration
 
-ICC's draining checker (`lib/expire-policies/workflow.js`) calls the Workflow Service's draining API to determine if a version can be safely expired:
+When ICC discovers a pod with the `plt.dev/workflow: "true"` label, it registers queue handlers with the Workflow Service on behalf of the pod:
+
+```mermaid
+sequenceDiagram
+    participant Pod as App Pod
+    participant ICC as ICC
+    participant WF as Workflow Service
+
+    Pod->>ICC: Pod startup detected
+    ICC->>ICC: Read labels: app name, version, workflow=true
+    ICC->>ICC: Discover K8s Service name and port
+    ICC->>WF: POST /api/v1/apps - create app (if needed)
+    ICC->>WF: POST /api/v1/apps/:id/k8s-binding
+    ICC->>WF: POST /api/v1/apps/:id/handlers - register endpoints
+    Note over WF: Handler registered with FQDN URLs<br/>for cross-namespace dispatch
+```
+
+ICC constructs handler URLs using the full K8s FQDN:
+
+```
+http://<service>.<namespace>.svc.cluster.local:<port>/.well-known/workflow/v1/{flow,step,webhook}
+```
+
+This is essential because **apps typically run in their own namespaces** (e.g. `customer-ns`), separate from the Workflow Service (in `platformatic`). Localhost URLs would not work — the Workflow Service cannot reach `localhost` on a pod in another namespace. The FQDN format works across any namespace boundary.
+
+A ClusterIP Service must exist with the `app.kubernetes.io/name` label matching the pod. ICC uses this service to construct the dispatch URL. The service must expose the app port (default 3042).
+
+**The world client does NOT register handlers in K8s** — it detects the K8s environment via the service account token and skips registration in `start()`. This avoids creating duplicate handlers with conflicting URLs (one from ICC with FQDN, one from the world client with localhost). The dispatcher picks randomly among matching handlers, so a duplicate localhost entry would cause ~50% of cross-namespace dispatches to fail.
+
+### 11.3 Draining Checks (Three-Phase Model)
+
+The draining checker evaluates each draining version through three phases on each check interval:
+
+```mermaid
+sequenceDiagram
+    participant DC as Draining Checker
+    participant WF as Workflow Service
+    participant K8s as Kubernetes
+
+    Note over DC: Phase 1: Grace Period
+    alt Drain age < grace period
+        DC->>DC: Keep alive unconditionally
+        Note over DC: No checks run
+    else Drain age > max alive
+        Note over DC: Phase 3: Force Expire
+        DC->>WF: Force-expire all remaining work
+        DC->>K8s: Scale to 0, mark EXPIRED
+    else Between grace period and max alive
+        Note over DC: Phase 2: Policy Checks
+        DC->>WF: Check active runs, hooks, waits, queue
+        alt Has active work
+            DC->>DC: Keep alive
+        else No active work and RPS = 0
+            DC->>K8s: Scale to 0, mark EXPIRED
+        end
+    end
+```
+
+1. **Grace period** — the version is kept alive unconditionally. No traffic or workflow checks are run. This gives in-flight requests time to complete.
+2. **Policy checks** — ICC calls the Workflow Service's draining API and checks HTTP traffic. The version is expired only when **all** checks pass.
+3. **Max alive** — hard ceiling. The version is force-expired regardless of remaining activity. This prevents stuck workflows from keeping versions alive indefinitely.
+
+Grace period and max alive are configured **separately for HTTP and Workflow** expire policies, because workflow runs can take hours or days while HTTP requests complete in seconds:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `PLT_SKEW_HTTP_GRACE_PERIOD_MS` | `1800000` (30 min) | Grace period for HTTP apps |
+| `PLT_SKEW_HTTP_MAX_ALIVE_MS` | `86400000` (24h) | Max alive for HTTP apps |
+| `PLT_SKEW_WORKFLOW_GRACE_PERIOD_MS` | `3600000` (1h) | Grace period for workflow apps |
+| `PLT_SKEW_WORKFLOW_MAX_ALIVE_MS` | `259200000` (72h) | Max alive for workflow apps |
+
+The expire policy is selected per-version based on the `plt.dev/workflow` label.
+
+**Phase 2 details:** ICC's draining checker (`lib/expire-policies/workflow.js`) calls the Workflow Service's draining API:
 
 ```
 GET /api/v1/apps/:appId/versions/:deploymentId/status
@@ -941,7 +1122,7 @@ GET /api/v1/apps/:appId/versions/:deploymentId/status
 ```
 
 The `shouldExpire` function checks:
-1. **Zero HTTP RPS in the configured window** (existing Prometheus check, window configured via `skewPolicy.rpsWindow`) — or RPS check returns null (no metrics)
+1. **Zero HTTP RPS in the configured window** (existing Prometheus check) — or RPS check returns null (no metrics)
 2. **Zero active workflow runs** (`activeRuns: 0`)
 3. **Zero pending hooks** (`pendingHooks: 0`)
 4. **Zero pending waits** (`pendingWaits: 0`)
@@ -949,9 +1130,9 @@ The `shouldExpire` function checks:
 
 This is authoritative — the Workflow Service answers from its own database. No estimation, no stale heartbeats, no blind spots.
 
-### 11.3 Force-Expiration
+### 11.4 Force-Expiration
 
-When the grace period expires and in-flight runs remain, ICC calls:
+When the max alive ceiling is exceeded and in-flight runs remain, ICC calls:
 
 ```
 POST /api/v1/apps/:appId/versions/:deploymentId/expire
@@ -973,7 +1154,7 @@ ICC then:
 
 The `expireAndCleanup` function in `version-cleanup.js` orchestrates the ICC side, calling `forceExpire` for workflow-policy versions before proceeding with standard cleanup.
 
-### 11.4 Dashboard Extensions
+### 11.5 Dashboard Extensions
 
 The ICC dashboard's skew protection view is extended with workflow-specific information:
 
@@ -1018,8 +1199,9 @@ graph LR
 **Transition triggers:**
 
 - **Active → Draining:** A newer version is detected by ICC. Webhooks continue to work — they route to the new active version, which forwards resume messages to the draining version via the queue.
-- **Draining → Expiring:** Zero HTTP RPS in the configured window (`skewPolicy.rpsWindow`) AND zero in-flight workflow runs AND zero pending hooks/waits AND zero queued messages, OR grace period exceeded.
-- **Expiring → Expired:** In-flight runs cancelled (via Workflow Service expire API), HTTPRoute rules removed, Deployment scaled to 0.
+- **Draining → Expired (clean):** Grace period elapsed AND zero HTTP RPS AND zero in-flight workflow runs AND zero pending hooks/waits AND zero queued messages. HTTPRoute rules removed, Deployment scaled to 0.
+- **Draining → Expiring (forced):** Max alive ceiling exceeded. Remaining runs are force-cancelled via the Workflow Service expire API.
+- **Expiring → Expired:** In-flight runs cancelled, queued messages dead-lettered, handlers deregistered, HTTPRoute rules removed, Deployment scaled to 0.
 
 ---
 
