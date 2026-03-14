@@ -21,8 +21,14 @@ export function createPlatformaticWorld (config: PlatformaticWorldConfig): World
     ...createStreamer(client),
     getEncryptionKeyForRun: createEncryption(client),
     async start () {
-      // Register this process as a queue handler with the workflow service.
-      // The test server (world-testing) sets process.env.PORT after listening.
+      // In K8s, ICC registers queue handlers with proper FQDN URLs
+      // (http://<service>.<namespace>.svc.cluster.local:<port>/...) so the
+      // workflow service can dispatch cross-namespace.  Registering here with
+      // localhost would create a duplicate handler that fails when picked.
+      if (isRunningInK8s()) return
+
+      // Local dev (no ICC) — register with localhost so the workflow service
+      // running on the same machine can reach us.
       const port = process.env.PORT
       if (!port) return
       const baseUrl = `http://localhost:${port}`
@@ -48,13 +54,14 @@ export interface CreateWorldOptions {
   deploymentVersion: string
 }
 
-const SA_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
-const SA_NAMESPACE_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
-const SA_CA_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+function saPath (file: string): string {
+  const base = process.env.PLT_WORLD_SA_PATH || '/var/run/secrets/kubernetes.io/serviceaccount'
+  return `${base}/${file}`
+}
 
 function isRunningInK8s (): boolean {
   try {
-    readFileSync(SA_TOKEN_PATH)
+    readFileSync(saPath('token'))
     return true
   } catch {
     return false
@@ -63,12 +70,12 @@ function isRunningInK8s (): boolean {
 
 async function readVersionFromK8sApi (): Promise<string | undefined> {
   try {
-    const token = readFileSync(SA_TOKEN_PATH, 'utf8').trim()
-    const namespace = readFileSync(SA_NAMESPACE_PATH, 'utf8').trim()
+    const token = readFileSync(saPath('token'), 'utf8').trim()
+    const namespace = readFileSync(saPath('namespace'), 'utf8').trim()
     const podName = process.env.HOSTNAME
     if (!podName) return undefined
 
-    const ca = readFileSync(SA_CA_PATH)
+    const ca = readFileSync(saPath('ca.crt'))
     const dispatcher = new Agent({ connect: { ca } })
     const res = await fetch(
       `https://kubernetes.default.svc/api/v1/namespaces/${namespace}/pods/${podName}`,
