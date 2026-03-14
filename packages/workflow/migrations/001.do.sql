@@ -17,7 +17,7 @@ CREATE TABLE workflow_app_k8s_bindings (
   namespace       VARCHAR NOT NULL,
   service_account VARCHAR NOT NULL,
   created_at      TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (namespace, service_account)
+  UNIQUE (application_id, namespace, service_account)
 );
 
 -- ============================================================

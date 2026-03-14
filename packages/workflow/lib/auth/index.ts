@@ -59,31 +59,27 @@ async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<vo
 
     const token = authHeader.slice(7)
 
-    let applicationId: number | null = null
+    let applicationIds: number[] = []
 
     if (validateK8s) {
       const k8sResult = await validateK8s(token)
       if (k8sResult) {
-        applicationId = k8sResult.applicationId
+        applicationIds = k8sResult.applicationIds
         if (k8sResult.isAdmin) {
           request.isAdmin = true
         }
       }
     }
 
-    if (applicationId === null && !request.isAdmin) {
+    if (applicationIds.length === 0 && !request.isAdmin) {
       if (isAdminPath(url)) {
         throw new Forbidden('admin access required')
       }
       throw new Unauthorized('invalid credentials')
     }
 
-    if (applicationId !== null) {
-      request.appId = applicationId
-    }
-
     // Admin can access app-scoped endpoints when appId is in URL
-    if (request.isAdmin && applicationId === null) {
+    if (request.isAdmin && applicationIds.length === 0) {
       const appIdMatch = url.match(/\/api\/v1\/apps\/([^/]+)/)
       if (appIdMatch) {
         const result = await app.pg.query(
@@ -102,16 +98,35 @@ async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<vo
       throw new Forbidden('admin access required')
     }
 
-    // Verify URL appId matches auth-derived appId
+    // Resolve which app this request is for.
+    // With a single binding, use it directly. With multiple bindings
+    // (shared service account), resolve from the URL's appId.
     const appIdMatch = url.match(/\/api\/v1\/apps\/([^/]+)/)
-    if (appIdMatch) {
+    if (applicationIds.length === 1) {
+      request.appId = applicationIds[0]
+      // Still verify URL appId matches if present
+      if (appIdMatch) {
+        const result = await app.pg.query(
+          'SELECT id FROM workflow_applications WHERE app_id = $1',
+          [appIdMatch[1]]
+        )
+        if (result.rows.length === 0 || result.rows[0].id !== applicationIds[0]) {
+          throw new Forbidden('app ID mismatch')
+        }
+      }
+    } else if (appIdMatch) {
+      // Multiple bindings — resolve app from URL
       const result = await app.pg.query(
         'SELECT id FROM workflow_applications WHERE app_id = $1',
         [appIdMatch[1]]
       )
-      if (result.rows.length === 0 || result.rows[0].id !== applicationId) {
+      if (result.rows.length === 0 || !applicationIds.includes(result.rows[0].id)) {
         throw new Forbidden('app ID mismatch')
       }
+      request.appId = result.rows[0].id
+    } else if (applicationIds.length > 0) {
+      // No URL appId and multiple bindings — use the first
+      request.appId = applicationIds[0]
     }
   })
 }
