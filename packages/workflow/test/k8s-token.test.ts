@@ -55,7 +55,7 @@ describe('k8s-token validator', () => {
     const result = await validate('admin-token-123')
     assert.ok(result)
     assert.equal(result.isAdmin, true)
-    assert.equal(result.applicationId, null)
+    assert.deepEqual(result.applicationIds, [])
 
     mockServer.close()
   })
@@ -98,7 +98,7 @@ describe('k8s-token validator', () => {
     const result = await validate('app-token-456')
     assert.ok(result)
     assert.equal(result.isAdmin, false)
-    assert.equal(result.applicationId, applicationId)
+    assert.deepEqual(result.applicationIds, [applicationId])
 
     // Cleanup
     await ctx.app.pg.query('DELETE FROM workflow_app_k8s_bindings WHERE application_id = $1', [applicationId])

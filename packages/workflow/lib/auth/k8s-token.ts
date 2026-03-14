@@ -9,12 +9,12 @@ interface K8sConfig {
 }
 
 export interface K8sValidationResult {
-  applicationId: number | null
+  applicationIds: number[]
   isAdmin: boolean
 }
 
 interface CacheEntry {
-  applicationId: number | null
+  applicationIds: number[]
   isAdmin: boolean
   expiresAt: number
 }
@@ -48,7 +48,7 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
     // Check cache
     const cached = cache.get(token)
     if (cached && cached.expiresAt > Date.now()) {
-      return { applicationId: cached.applicationId, isAdmin: cached.isAdmin }
+      return { applicationIds: cached.applicationIds, isAdmin: cached.isAdmin }
     }
 
     // Call K8s TokenReview API
@@ -108,17 +108,17 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
       [namespace, serviceAccount]
     )
 
-    const applicationId = result.rows.length > 0 ? result.rows[0].application_id : null
+    const applicationIds = result.rows.map((r: { application_id: number }) => r.application_id)
 
-    if (applicationId === null && !isAdmin) return null
+    if (applicationIds.length === 0 && !isAdmin) return null
 
     // Cache with TTL (use a conservative 5-minute cache for K8s tokens)
     cache.set(token, {
-      applicationId,
+      applicationIds,
       isAdmin,
       expiresAt: Date.now() + 5 * 60 * 1000 - EXPIRY_BUFFER,
     })
 
-    return { applicationId, isAdmin }
+    return { applicationIds, isAdmin }
   }
 }

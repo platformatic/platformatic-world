@@ -41,7 +41,7 @@ async function appsPlugin (app: FastifyInstance): Promise<void> {
     await app.pg.query(
       `INSERT INTO workflow_app_k8s_bindings (application_id, namespace, service_account)
        VALUES ($1, $2, $3)
-       ON CONFLICT (namespace, service_account) DO UPDATE SET application_id = $1`,
+       ON CONFLICT (application_id, namespace, service_account) DO NOTHING`,
       [appResult.rows[0].id, namespace, serviceAccount]
     )
 

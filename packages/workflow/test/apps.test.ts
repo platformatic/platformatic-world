@@ -101,9 +101,9 @@ describe('apps - CRUD operations', () => {
     await ctx.app.pg.query('DELETE FROM workflow_applications WHERE app_id = $1', [appId])
   })
 
-  it('should upsert k8s binding on conflict', async () => {
-    const appId1 = `upsert-test-1-${Date.now()}`
-    const appId2 = `upsert-test-2-${Date.now()}`
+  it('should allow multiple apps to share the same service account', async () => {
+    const appId1 = `shared-sa-1-${Date.now()}`
+    const appId2 = `shared-sa-2-${Date.now()}`
 
     await ctx.app.inject({ method: 'POST', url: '/api/v1/apps', payload: { appId: appId1 } })
     await ctx.app.inject({ method: 'POST', url: '/api/v1/apps', payload: { appId: appId2 } })
@@ -112,33 +112,55 @@ describe('apps - CRUD operations', () => {
     await ctx.app.inject({
       method: 'POST',
       url: `/api/v1/apps/${appId1}/k8s-binding`,
-      payload: { namespace: 'upsert-ns', serviceAccount: 'upsert-sa' },
+      payload: { namespace: 'shared-ns', serviceAccount: 'shared-sa' },
     })
 
-    // Same namespace+serviceAccount for app2 should upsert
+    // Same namespace+serviceAccount for app2 should create a second binding
     const response = await ctx.app.inject({
       method: 'POST',
       url: `/api/v1/apps/${appId2}/k8s-binding`,
-      payload: { namespace: 'upsert-ns', serviceAccount: 'upsert-sa' },
+      payload: { namespace: 'shared-ns', serviceAccount: 'shared-sa' },
     })
     assert.equal(response.statusCode, 201)
 
-    // Verify binding now points to app2
+    // Verify both bindings exist
+    const app1Result = await ctx.app.pg.query(
+      'SELECT id FROM workflow_applications WHERE app_id = $1',
+      [appId1]
+    )
     const app2Result = await ctx.app.pg.query(
       'SELECT id FROM workflow_applications WHERE app_id = $1',
       [appId2]
     )
     const bindingResult = await ctx.app.pg.query(
       `SELECT application_id FROM workflow_app_k8s_bindings
-       WHERE namespace = $1 AND service_account = $2`,
-      ['upsert-ns', 'upsert-sa']
+       WHERE namespace = $1 AND service_account = $2
+       ORDER BY application_id`,
+      ['shared-ns', 'shared-sa']
     )
-    assert.equal(bindingResult.rows[0].application_id, app2Result.rows[0].id)
+    assert.equal(bindingResult.rows.length, 2)
+    const ids = bindingResult.rows.map((r: { application_id: number }) => r.application_id)
+    assert.ok(ids.includes(app1Result.rows[0].id))
+    assert.ok(ids.includes(app2Result.rows[0].id))
+
+    // Re-posting same binding should be idempotent (DO NOTHING)
+    const response2 = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${appId1}/k8s-binding`,
+      payload: { namespace: 'shared-ns', serviceAccount: 'shared-sa' },
+    })
+    assert.equal(response2.statusCode, 201)
+    const bindingResult2 = await ctx.app.pg.query(
+      `SELECT application_id FROM workflow_app_k8s_bindings
+       WHERE namespace = $1 AND service_account = $2`,
+      ['shared-ns', 'shared-sa']
+    )
+    assert.equal(bindingResult2.rows.length, 2)
 
     // Cleanup
     await ctx.app.pg.query(
       'DELETE FROM workflow_app_k8s_bindings WHERE namespace = $1 AND service_account = $2',
-      ['upsert-ns', 'upsert-sa']
+      ['shared-ns', 'shared-sa']
     )
     await ctx.app.pg.query('DELETE FROM workflow_applications WHERE app_id = $1', [appId1])
     await ctx.app.pg.query('DELETE FROM workflow_applications WHERE app_id = $1', [appId2])
