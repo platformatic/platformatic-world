@@ -15,7 +15,7 @@
   "dependencies": {
     "@fastify/autoload": "^6.0.3",
     "@fastify/error": "^4.1.0",
-    "@platformatic/leader": "^0.1.0",
+    "@platformatic/leader": "^0.2.0",
     "@platformatic/service": "^3.40.0",
     "fastify": "^5.3.3",
     "fastify-plugin": "^5.1.0",
