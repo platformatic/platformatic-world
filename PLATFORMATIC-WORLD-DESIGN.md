@@ -173,9 +173,9 @@ The Workflow Service authenticates requests by:
 3. Extracting the identity from the response — the `username` field has the format `system:serviceaccount:{namespace}:{serviceAccount}`
 4. Looking up `workflow_app_k8s_bindings` to map the namespace/serviceAccount pair to an application
 
-**Isolation:** The `workflow_app_k8s_bindings` table has a `UNIQUE (namespace, service_account)` constraint. Each namespace/serviceAccount pair maps to exactly one application. A pod cannot access another application's data because its K8s identity is fixed by the kubelet — it cannot be forged or changed at runtime. ICC is the sole authority that creates bindings (via `POST /api/v1/apps`).
+**Isolation:** The `workflow_app_k8s_bindings` table has a `UNIQUE (application_id, namespace, service_account)` constraint. Multiple applications can share the same K8s service account — each gets its own binding row. When a token resolves to multiple bindings, the auth layer resolves the correct application from the URL's `appId` parameter and verifies it exists in the binding list. A pod cannot access an application it has no binding for, because ICC is the sole authority that creates bindings (via `POST /api/v1/apps`).
 
-**Requirement:** Each application should use its own K8s service account. If two apps in the same namespace share a service account, they would map to the same application.
+**Shared service accounts:** In managed platforms (e.g., Platformatic Cloud) and local clusters (Desk), all apps in a namespace typically share the `default` service account. The binding model supports this — each app gets its own `(application_id, namespace, service_account)` tuple.
 
 ### 6.3 App Management (Multi-tenant Only)
 
@@ -772,7 +772,7 @@ CREATE TABLE workflow_app_k8s_bindings (
   namespace       VARCHAR NOT NULL,
   service_account VARCHAR NOT NULL,
   created_at      TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (namespace, service_account)
+  UNIQUE (application_id, namespace, service_account)
 );
 ```
 

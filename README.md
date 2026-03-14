@@ -321,9 +321,7 @@ packages/
         poller.ts             # Deferred delivery + retry + orphan detection
         retry.ts              # Exponential backoff
       migrations/
-        001.do.sql            # Core schema
-        002.do.sql            # Hook status columns
-        003.do.sql            # Quotas table
+        001.do.sql            # Full schema (auth, core, queue, encryption, quotas)
     test/                     # 65 tests across 16 suites
 
   world/
