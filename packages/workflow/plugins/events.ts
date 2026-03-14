@@ -209,6 +209,16 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'run_completed': {
+          // Skip duplicate completions
+          const runCheck = await client.query(
+            'SELECT status FROM workflow_runs WHERE id = $1 AND application_id = $2',
+            [rawRunId, appId]
+          )
+          if (runCheck.rows.length > 0 && runCheck.rows[0].status === 'completed') {
+            await client.query('COMMIT')
+            const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
+            return { event: null, run: formatRun(runRow, resolveData) }
+          }
           const output = body.eventData?.output ? encodeData(body.eventData.output) : null
           await client.query(
             `UPDATE workflow_runs SET status = 'completed', output = $3, completed_at = NOW(), updated_at = NOW()
@@ -232,6 +242,16 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'run_failed': {
+          // Skip duplicate failures
+          const runFailCheck = await client.query(
+            'SELECT status FROM workflow_runs WHERE id = $1 AND application_id = $2',
+            [rawRunId, appId]
+          )
+          if (runFailCheck.rows.length > 0 && (runFailCheck.rows[0].status === 'failed' || runFailCheck.rows[0].status === 'completed')) {
+            await client.query('COMMIT')
+            const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
+            return { event: null, run: formatRun(runRow, resolveData) }
+          }
           const rawError = body.eventData?.error
           const error = rawError
             ? {
@@ -548,9 +568,15 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
 
         case 'wait_completed': {
           const waitResult = await client.query(
-            'SELECT id FROM workflow_waits WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3',
+            'SELECT id, status FROM workflow_waits WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3',
             [rawRunId, body.correlationId, appId]
           )
+          // Skip duplicate completions — same idempotency guard as step_completed.
+          if (waitResult.rows.length > 0 && waitResult.rows[0].status === 'completed') {
+            await client.query('COMMIT')
+            const waitRow = (await client.query('SELECT * FROM workflow_waits WHERE id = $1', [waitResult.rows[0].id])).rows[0]
+            return { event: null, wait: formatWait(waitRow) }
+          }
           if (waitResult.rows.length > 0) {
             await client.query(
               `UPDATE workflow_waits SET status = 'completed', completed_at = NOW(), updated_at = NOW()
