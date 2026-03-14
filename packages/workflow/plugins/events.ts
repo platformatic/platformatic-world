@@ -155,7 +155,9 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
   })
 
   // Create event (main write path)
-  app.post('/api/v1/apps/:appId/runs/:runId/events', async (request) => {
+  // Raise body limit to 20 MB — step outputs can include generated images
+  // (e.g. Gemini image generation) that exceed Fastify's 1 MB default.
+  app.post('/api/v1/apps/:appId/runs/:runId/events', { bodyLimit: 20 * 1024 * 1024 }, async (request) => {
     const { runId: rawRunId } = request.params as { runId: string }
     const body = request.body as any
     const appId = request.appId
@@ -378,9 +380,16 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         case 'step_completed': {
           const resultData = body.eventData?.result ? encodeData(body.eventData.result) : null
           const stepResult = await client.query(
-            'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
             [rawRunId, body.correlationId, appId]
           )
+          // Skip duplicate completions — the SDK may retry after a transient
+          // failure even though the first request succeeded server-side.
+          if (stepResult.rows.length > 0 && stepResult.rows[0].status === 'completed') {
+            await client.query('COMMIT')
+            const stepRow = (await client.query('SELECT * FROM workflow_steps WHERE id = $1', [stepResult.rows[0].id])).rows[0]
+            return { event: null, step: formatStep(stepRow, resolveData) }
+          }
           if (stepResult.rows.length > 0) {
             await client.query(
               `UPDATE workflow_steps SET status = 'completed', output = $3, completed_at = NOW(), updated_at = NOW()
@@ -401,9 +410,15 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
             ? { message: String(body.eventData.error || ''), stack: body.eventData.stack }
             : null
           const stepResult = await client.query(
-            'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
             [rawRunId, body.correlationId, appId]
           )
+          // Skip duplicate failures — same idempotency guard as step_completed.
+          if (stepResult.rows.length > 0 && (stepResult.rows[0].status === 'failed' || stepResult.rows[0].status === 'completed')) {
+            await client.query('COMMIT')
+            const stepRow = (await client.query('SELECT * FROM workflow_steps WHERE id = $1', [stepResult.rows[0].id])).rows[0]
+            return { event: null, step: formatStep(stepRow, resolveData) }
+          }
           if (stepResult.rows.length > 0) {
             await client.query(
               `UPDATE workflow_steps SET status = 'failed', error = $3, completed_at = NOW(), updated_at = NOW()
