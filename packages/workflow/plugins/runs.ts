@@ -70,6 +70,89 @@ async function runsPlugin (app: FastifyInstance): Promise<void> {
 
     return { data, cursor: nextCursor, hasMore }
   })
+  // Get workflow step template from the most recent completed run
+  // Used by the UI to pre-render step placeholders for in-progress runs
+  app.get('/api/v1/apps/:appId/workflows/:workflowName/template', async (request, reply) => {
+    const { workflowName } = request.params as { workflowName: string }
+    const query = request.query as { deploymentId?: string }
+    const appId = request.appId
+
+    const conditions = ['r.application_id = $1', 'r.workflow_name = $2', "r.status = 'completed'"]
+    const params: any[] = [appId, workflowName]
+    let paramIdx = 3
+
+    if (query.deploymentId) {
+      conditions.push(`r.deployment_id = $${paramIdx++}`)
+      params.push(query.deploymentId)
+    }
+
+    // Find the most recent completed run
+    const runResult = await app.pg.query(
+      `SELECT r.id FROM workflow_runs r
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY r.created_at DESC LIMIT 1`,
+      params
+    )
+
+    if (runResult.rows.length === 0) {
+      reply.code(404)
+      return { error: 'No completed run found for this workflow' }
+    }
+
+    const sourceRunId = runResult.rows[0].id
+
+    // Get all steps from that run, ordered by creation time
+    const stepsResult = await app.pg.query(
+      `SELECT step_name, created_at, started_at, completed_at
+       FROM workflow_steps
+       WHERE run_id = $1 AND application_id = $2
+       ORDER BY created_at ASC`,
+      [sourceRunId, appId]
+    )
+
+    // Check for hooks and waits
+    const hooksResult = await app.pg.query(
+      'SELECT COUNT(*) as count FROM workflow_hooks WHERE run_id = $1 AND application_id = $2',
+      [sourceRunId, appId]
+    )
+    const waitsResult = await app.pg.query(
+      'SELECT COUNT(*) as count FROM workflow_waits WHERE run_id = $1 AND application_id = $2',
+      [sourceRunId, appId]
+    )
+
+    // Build step template with parallel group detection
+    const steps: { stepName: string; order: number; parallelGroup?: number }[] = []
+    let currentOrder = 0
+    let currentGroupId = 0
+    let prevEnd = 0
+
+    for (let i = 0; i < stepsResult.rows.length; i++) {
+      const row = stepsResult.rows[i]
+      const start = new Date(row.started_at || row.created_at).getTime()
+      const end = new Date(row.completed_at || row.started_at || row.created_at).getTime()
+
+      if (i > 0 && start < prevEnd) {
+        // Overlaps with previous — same parallel group
+        steps[steps.length - 1].parallelGroup = currentGroupId
+        steps.push({ stepName: row.step_name, order: currentOrder, parallelGroup: currentGroupId })
+      } else {
+        if (i > 0) {
+          currentOrder++
+          currentGroupId++
+        }
+        steps.push({ stepName: row.step_name, order: currentOrder })
+      }
+
+      prevEnd = Math.max(prevEnd, end)
+    }
+
+    return {
+      steps,
+      hasHooks: parseInt(hooksResult.rows[0].count) > 0,
+      hasWaits: parseInt(waitsResult.rows[0].count) > 0,
+      sourceRunId
+    }
+  })
 }
 
 export default fp(runsPlugin, { name: 'runs', dependencies: ['auth'] })

@@ -21,6 +21,7 @@
     "fastify-plugin": "^5.1.0",
     "pg": "^8.16.0",
     "postgrator": "^8.0.0",
+    "ulid": "^3.0.2",
     "undici": "^7.22.0",
     "wattpm": "^3.40.0"
   },

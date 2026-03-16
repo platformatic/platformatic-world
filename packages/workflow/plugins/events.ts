@@ -131,12 +131,28 @@ function formatWait (row: any) {
 }
 
 async function insertEvent (client: pg.PoolClient, runId: string, appId: number, body: any): Promise<any> {
+  const correlationId = body.correlationId || null
   const eventData = body.eventData ? encodeData(body.eventData) : null
+
+  // Skip duplicate events — the SDK may re-send the same event on retry.
+  // Duplicates in the event log cause "Unconsumed event" errors during replay.
+  if (correlationId) {
+    const existing = await client.query(
+      `SELECT id FROM workflow_events
+       WHERE run_id = $1 AND application_id = $2 AND event_type = $3 AND correlation_id = $4
+       LIMIT 1`,
+      [runId, appId, body.eventType, correlationId]
+    )
+    if (existing.rows.length > 0) {
+      return (await client.query('SELECT * FROM workflow_events WHERE id = $1', [existing.rows[0].id])).rows[0]
+    }
+  }
+
   const result = await client.query(
     `INSERT INTO workflow_events (run_id, application_id, event_type, correlation_id, event_data, spec_version)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [runId, appId, body.eventType, body.correlationId || null, eventData, body.specVersion || null]
+    [runId, appId, body.eventType, correlationId, eventData, body.specVersion || null]
   )
   return result.rows[0]
 }
@@ -550,15 +566,26 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'wait_created': {
-          const waitId = randomUUID()
           const eventData = body.eventData || {}
           const resumeAt = eventData.resumeAt ? new Date(eventData.resumeAt) : null
 
-          await client.query(
-            `INSERT INTO workflow_waits (id, run_id, application_id, correlation_id, status, resume_at, spec_version)
-             VALUES ($1, $2, $3, $4, 'waiting', $5, $6)`,
-            [waitId, rawRunId, appId, body.correlationId, resumeAt, body.specVersion || null]
+          // Skip duplicate wait creation
+          const existingWait = await client.query(
+            'SELECT id FROM workflow_waits WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+            [rawRunId, body.correlationId, appId]
           )
+
+          let waitId
+          if (existingWait.rows.length > 0) {
+            waitId = existingWait.rows[0].id
+          } else {
+            waitId = randomUUID()
+            await client.query(
+              `INSERT INTO workflow_waits (id, run_id, application_id, correlation_id, status, resume_at, spec_version)
+               VALUES ($1, $2, $3, $4, 'waiting', $5, $6)`,
+              [waitId, rawRunId, appId, body.correlationId, resumeAt, body.specVersion || null]
+            )
+          }
 
           const eventRow = await insertEvent(client, rawRunId, appId, body)
           const waitRow = (await client.query('SELECT * FROM workflow_waits WHERE id = $1', [waitId])).rows[0]
