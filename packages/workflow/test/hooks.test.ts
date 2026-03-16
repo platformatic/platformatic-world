@@ -110,6 +110,33 @@ describe('hooks', () => {
     assert.equal(body.data[0].runId, runId)
   })
 
+  it('should handle duplicate hook_created as retry (same run, same token)', async () => {
+    // Re-send hook_created with the same token and correlationId — should not conflict
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+      payload: {
+        eventType: 'hook_created',
+        correlationId: 'hook-1',
+        specVersion: 2,
+        eventData: {
+          token: hookToken,
+          ownerId: 'user-1',
+          projectId: 'proj-1',
+          environment: 'production',
+        },
+      },
+    })
+
+    assert.equal(res.statusCode, 200)
+    const body = JSON.parse(res.body)
+    // Should return the existing hook, not a conflict
+    assert.ok(body.hook)
+    assert.equal(body.hook.token, hookToken)
+    assert.equal(body.hook.status, 'pending')
+  })
+
   it('should update hook status on hook_received', async () => {
     const res = await ctx.app.inject({
       method: 'POST',

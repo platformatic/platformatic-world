@@ -514,7 +514,20 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           )
 
           if (insertResult.rows.length === 0) {
-            // Token conflict — another active hook already exists
+            // Check if the existing hook belongs to this same run (retry/re-invocation)
+            const existingHook = await client.query(
+              'SELECT id FROM workflow_hooks WHERE token = $1 AND run_id = $2 AND correlation_id = $3 AND status = \'pending\'',
+              [eventData.token, rawRunId, body.correlationId]
+            )
+            if (existingHook.rows.length > 0) {
+              // Same run, same correlation — this is a retry, return the existing hook
+              const eventRow = await insertEvent(client, rawRunId, appId, body)
+              const hookRow = (await client.query('SELECT * FROM workflow_hooks WHERE id = $1', [existingHook.rows[0].id])).rows[0]
+              result = { event: formatEvent(eventRow, resolveData), hook: formatHook(hookRow) }
+              break
+            }
+
+            // Token conflict — another run's active hook already exists
             const conflictBody = {
               eventType: 'hook_conflict',
               correlationId: body.correlationId,
