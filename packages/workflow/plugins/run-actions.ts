@@ -1,6 +1,8 @@
 import fp from 'fastify-plugin'
-import { randomUUID } from 'node:crypto'
+import { monotonicFactory } from 'ulid'
 import type { FastifyInstance } from 'fastify'
+
+const ulid = monotonicFactory()
 import { RunNotFound, BadRequest } from '../lib/errors.ts'
 import { formatRun, encodeData } from './events.ts'
 
@@ -18,7 +20,7 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
     if (original.rows.length === 0) throw new RunNotFound(runId)
 
     const row = original.rows[0]
-    const newRunId = randomUUID()
+    const newRunId = `wrun_${ulid()}`
 
     const client = await app.pg.connect()
     try {

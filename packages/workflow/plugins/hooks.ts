@@ -44,13 +44,17 @@ async function hooksPlugin (app: FastifyInstance): Promise<void> {
 
     const offset = query.cursor ? parseInt(query.cursor, 10) : 0
 
-    const conditions = ['application_id = $1', "status != 'disposed'"]
+    const conditions = ['application_id = $1']
     const params: any[] = [appId]
     let paramIdx = 2
 
     if (query.runId) {
+      // When filtering by run, show all hooks including disposed
       conditions.push(`run_id = $${paramIdx++}`)
       params.push(query.runId)
+    } else {
+      // Global list: exclude disposed hooks
+      conditions.push("status != 'disposed'")
     }
 
     params.push(limit + 1)
