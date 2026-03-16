@@ -42,15 +42,30 @@ The `e2e/` directory contains a Next.js test app and end-to-end test suites (57 
 
 ## Quick Start
 
+### Using npx (no clone needed)
+
 ```bash
+# Start PostgreSQL
+docker run -d --name workflow-pg -e POSTGRES_USER=wf -e POSTGRES_PASSWORD=wf -e POSTGRES_DB=workflow -p 5434:5432 postgres:17-alpine
+
+# Start the workflow service
+npx @platformatic/workflow postgresql://wf:wf@localhost:5434/workflow
+```
+
+### From source
+
+```bash
+# Clone and install
+git clone https://github.com/platformatic/platformatic-world.git
+cd platformatic-world
+pnpm install
+
 # Start PostgreSQL
 docker compose up -d
 
-# Install dependencies
-pnpm install
-
 # Start the workflow service (single-tenant mode, no auth)
-node packages/workflow/src/server.ts
+cd packages/workflow
+npx wattpm start
 ```
 
 The service starts on `http://localhost:3042` by default. Without K8s, it runs in single-tenant mode — no authentication, one implicit application.
@@ -260,11 +275,7 @@ Exceeding a quota returns HTTP 429.
 
 ## Metrics
 
-The `/metrics` endpoint returns Prometheus-compatible metrics:
-
-- **Counters**: `wf_events_created_total`, `wf_runs_created_total`, `wf_messages_dispatched_total`, `wf_messages_dead_lettered_total`, `wf_messages_retried_total`
-- **Gauges**: `wf_active_runs`, `wf_queue_depth`, `wf_db_pool_total`, `wf_db_pool_idle`
-- **Summaries**: `wf_request_duration_ms`, `wf_queue_dispatch_duration_ms` (with p50, p95, p99 quantiles)
+The `/metrics` endpoint returns Prometheus-compatible metrics provided by the Platformatic runtime (HTTP request duration, status codes, Node.js runtime stats).
 
 ## Development
 
@@ -275,7 +286,7 @@ docker compose up -d
 # Install dependencies
 pnpm install
 
-# Run all unit/integration tests (65 workflow + 5 world)
+# Run all unit/integration tests (87 workflow + 12 world)
 pnpm test
 
 # Run Vercel-compatible e2e tests (57 tests — requires PostgreSQL on port 5434)

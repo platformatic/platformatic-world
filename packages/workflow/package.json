@@ -1,11 +1,22 @@
 {
   "name": "@platformatic/workflow",
   "version": "0.2.0",
+  "description": "Workflow orchestration service for Vercel Workflow DevKit on Kubernetes",
   "type": "module",
-  "private": true,
   "engines": {
     "node": ">=22.19.0"
   },
+  "bin": {
+    "platformatic-workflow": "./cli.js"
+  },
+  "files": [
+    "cli.js",
+    "watt.json",
+    "plugins",
+    "lib",
+    "queue",
+    "migrations"
+  ],
   "scripts": {
     "start": "wattpm start",
     "dev": "wattpm dev",
@@ -28,5 +39,11 @@
   "devDependencies": {
     "@types/node": "^22.15.0",
     "@types/pg": "^8.15.4"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/platformatic/platformatic-world.git",
+    "directory": "packages/workflow"
+  },
+  "license": "Apache-2.0"
 }
