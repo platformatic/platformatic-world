@@ -134,9 +134,11 @@ async function insertEvent (client: pg.PoolClient, runId: string, appId: number,
   const correlationId = body.correlationId || null
   const eventData = body.eventData ? encodeData(body.eventData) : null
 
-  // Skip duplicate events — the SDK may re-send the same event on retry.
-  // Duplicates in the event log cause "Unconsumed event" errors during replay.
-  if (correlationId) {
+  // Skip duplicate *_created events — the SDK may re-send them on retry or
+  // re-invocation. Duplicates in the event log cause "Unconsumed event" errors
+  // during replay. Only guard _created events because other event types
+  // (e.g. step_started) can legitimately repeat for step retries.
+  if (correlationId && body.eventType.endsWith('_created')) {
     const existing = await client.query(
       `SELECT id FROM workflow_events
        WHERE run_id = $1 AND application_id = $2 AND event_type = $3 AND correlation_id = $4
