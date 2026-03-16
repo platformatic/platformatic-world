@@ -147,12 +147,13 @@ describe('hooks', () => {
     assert.ok(body.hook)
     assert.equal(body.hook.status, 'disposed')
 
-    // Disposed hooks should not appear in list
+    // Disposed hooks should still appear when listing by runId (for run detail view)
     const listRes = await ctx.app.inject({
       method: 'GET',
       url: `/api/v1/apps/${ctx.appId}/hooks?runId=${runId}`,
       headers: { authorization: `Bearer ${ctx.apiKey}` },
     })
-    assert.equal(JSON.parse(listRes.body).data.length, 0)
+    assert.equal(JSON.parse(listRes.body).data.length, 1)
+    assert.equal(JSON.parse(listRes.body).data[0].status, 'disposed')
   })
 })
