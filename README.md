@@ -301,50 +301,51 @@ cd e2e && node --test --test-force-exit test/workflow.test.ts
 ```
 packages/
   workflow/
-    src/
-      app.ts                  # buildApp() factory
-      server.ts               # CLI entrypoint
-      lib/
-        db.ts                 # pg.Pool + Postgrator migrations
-        errors.ts             # Typed HTTP errors (@fastify/error)
-        auth/
-          index.ts            # Auth plugin (onRequest hook)
-          k8s-token.ts        # K8s ServiceAccount token validation
-      plugins/
-        apps.ts               # App provisioning
-        events.ts             # Event creation (main write path)
-        runs.ts               # Run queries
-        steps.ts              # Step queries
-        hooks.ts              # Hook queries
-        streams.ts            # Stream read/write
-        queue.ts              # Queue message ingestion
-        encryption.ts         # Per-run encryption keys
-        handlers.ts           # Pod handler registration
-        draining.ts           # Version draining status + force-expire
-        versions.ts           # Version status notifications
-        dead-letters.ts       # Dead-letter management
-        quotas.ts             # Quota checks + rate limiting
-        metrics.ts            # Prometheus /metrics endpoint
-        health.ts             # Health checks
-      queue/
-        router.ts             # Deployment-aware message routing
-        dispatcher.ts         # HTTP dispatch to pods
-        poller.ts             # Deferred delivery + retry + orphan detection
-        retry.ts              # Exponential backoff
-      migrations/
-        001.do.sql            # Full schema (auth, core, queue, encryption, quotas)
-    test/                     # 65 tests across 16 suites
+    cli.js                    # CLI entrypoint (npx @platformatic/workflow)
+    watt.json                 # Platformatic Service configuration
+    lib/
+      db.ts                   # pg.Pool + Postgrator migrations
+      errors.ts               # Typed HTTP errors (@fastify/error)
+      quotas.ts               # Quota checks + rate limiting
+      auth/
+        index.ts              # Auth plugin (onRequest hook)
+        k8s-token.ts          # K8s ServiceAccount token validation
+    plugins/
+      db.ts                   # Database + auth initialization
+      auth.ts                 # Auth wiring
+      apps.ts                 # App provisioning + K8s bindings
+      events.ts               # Event creation (main write path)
+      runs.ts                 # Run queries + workflow template API
+      run-actions.ts          # Replay, cancel, wake-up
+      steps.ts                # Step queries
+      hooks.ts                # Hook queries
+      streams.ts              # Stream read/write
+      queue.ts                # Queue message ingestion
+      poller.ts               # Poller lifecycle management
+      encryption.ts           # Per-run encryption keys
+      handlers.ts             # Pod handler registration
+      draining.ts             # Version draining status + force-expire
+      versions.ts             # Version status notifications
+      dead-letters.ts         # Dead-letter management
+    queue/
+      router.ts               # Deployment-aware message routing
+      dispatcher.ts           # HTTP dispatch to pods
+      poller.ts               # Deferred delivery + retry + orphan detection
+      retry.ts                # Exponential backoff
+    migrations/
+      001.do.sql              # Full schema (auth, core, queue, encryption, quotas)
+    test/                     # 87 tests across 19 suites
 
   world/
     src/
-      index.ts                # createPlatformaticWorld() factory
+      index.ts                # createPlatformaticWorld() + createWorld() factories
       lib/
         client.ts             # undici Pool HTTP client
         storage.ts            # Storage interface (runs, events, steps, hooks)
-        queue.ts              # Queue + createQueueHandler
+        queue.ts              # Queue + handler registration
         streamer.ts           # Stream read/write
         encryption.ts         # Encryption key fetching
-    test/                     # 5 integration tests
+    test/                     # 12 tests
 ```
 
 ## Design Document
