@@ -11,10 +11,14 @@ const CACHE_TTL = 60_000 // 1 minute
 const quotaCache = new Map<number, QuotaCache>()
 const queueCounters = new Map<string, { count: number; resetAt: number }>()
 
-const DEFAULT_QUOTAS = {
+export const DEFAULT_QUOTAS = {
   maxRuns: 10_000,
   maxEventsPerRun: 100_000,
   maxQueuePerMinute: 100_000,
+}
+
+export function invalidateQuotaCache (appId: number): void {
+  quotaCache.delete(appId)
 }
 
 async function getQuotas (app: FastifyInstance, appId: number): Promise<QuotaCache> {
