@@ -16,8 +16,8 @@
     "migrations"
   ],
   "scripts": {
-    "prepublishOnly": "tsc -p tsconfig.json",
-    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "build": "tsc -p tsconfig.json && cp -r migrations dist/",
     "start": "wattpm start",
     "dev": "wattpm dev -c watt-dev.json",
     "test": "node --test --test-concurrency=1 test/*.test.ts",
