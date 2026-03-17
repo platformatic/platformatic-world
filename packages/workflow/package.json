@@ -12,14 +12,14 @@
   "files": [
     "cli.js",
     "watt.json",
-    "plugins",
-    "lib",
-    "queue",
+    "dist",
     "migrations"
   ],
   "scripts": {
+    "prepublishOnly": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
     "start": "wattpm start",
-    "dev": "wattpm dev",
+    "dev": "wattpm dev -c watt-dev.json",
     "test": "node --test --test-concurrency=1 test/*.test.ts",
     "lint": "eslint"
   },
@@ -27,6 +27,7 @@
     "@fastify/autoload": "^6.0.3",
     "@fastify/error": "^4.1.0",
     "@platformatic/leader": "^0.2.0",
+    "@platformatic/runtime": "^3.41.0",
     "@platformatic/service": "^3.40.0",
     "fastify": "^5.3.3",
     "fastify-plugin": "^5.1.0",
@@ -38,7 +39,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "@types/pg": "^8.15.4"
+    "@types/pg": "^8.15.4",
+    "typescript": "^5.9.3"
   },
   "repository": {
     "type": "git",

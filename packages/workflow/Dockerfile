@@ -4,14 +4,18 @@ RUN npm install -g pnpm@10
 
 WORKDIR /app
 
-COPY package.json ./
-RUN pnpm install --prod
+COPY package.json tsconfig.json ./
+RUN pnpm install
 
 COPY watt.json ./
 COPY plugins/ ./plugins/
 COPY lib/ ./lib/
 COPY queue/ ./queue/
 COPY migrations/ ./migrations/
+
+# Compile TypeScript plugins to dist/, then remove devDependencies
+RUN pnpm run build
+RUN pnpm prune --prod
 
 EXPOSE 3042
 

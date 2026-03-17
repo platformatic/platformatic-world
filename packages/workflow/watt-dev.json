@@ -9,6 +9,6 @@
     "metrics": true
   },
   "plugins": {
-    "paths": ["./dist/plugins"]
+    "paths": ["./plugins"]
   }
 }
