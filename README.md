@@ -159,6 +159,10 @@ Supported event types: `run_created`, `run_started`, `run_completed`, `run_faile
 |---|---|---|
 | `GET` | `/runs/:runId` | Get run by ID |
 | `GET` | `/runs` | List runs (filters: `status`, `workflowName`, `deploymentId`) |
+| `POST` | `/runs/:runId/replay` | Replay a completed run (creates new run with same input, targets original version) |
+| `POST` | `/runs/:runId/cancel` | Cancel a running run |
+| `POST` | `/runs/:runId/wake-up` | Cancel active sleeps for a run |
+| `GET` | `/workflows/:workflowName/template` | Get step template from most recent completed run (query: `deploymentId`) |
 
 ### Steps
 
@@ -221,6 +225,8 @@ Supports `delaySeconds` for deferred delivery and `idempotencyKey` for deduplica
 | `GET` | `/api/v1/apps/:appId/versions/:deploymentId/status` | Get version draining status |
 | `POST` | `/api/v1/apps/:appId/versions/:deploymentId/expire` | Force-expire a deployment version |
 | `POST` | `/api/v1/versions/notify` | Notify version status change |
+| `GET` | `/api/v1/apps/:appId/quotas` | Get quotas for an app (returns defaults if none set) |
+| `PUT` | `/api/v1/apps/:appId/quotas` | Set/update quotas (`maxRuns`, `maxEventsPerRun`, `maxQueuePerMinute`) |
 
 ### Health & Observability
 
@@ -263,7 +269,7 @@ This gives ICC a single authoritative source for "are there any non-terminal wor
 
 ## Quotas & Rate Limiting
 
-Per-application quotas (configurable via `workflow_app_quotas` table):
+Per-application quotas (configurable via the admin API or the `workflow_app_quotas` table):
 
 | Quota | Default | Description |
 |---|---|---|
@@ -302,7 +308,8 @@ cd e2e && node --test --test-force-exit test/workflow.test.ts
 packages/
   workflow/
     cli.js                    # CLI entrypoint (npx @platformatic/workflow)
-    watt.json                 # Platformatic Service configuration
+    watt.json                 # Platformatic Service configuration (dist/plugins for production)
+    watt-dev.json             # Dev configuration (./plugins for local development)
     lib/
       db.ts                   # pg.Pool + Postgrator migrations
       errors.ts               # Typed HTTP errors (@fastify/error)
@@ -327,6 +334,7 @@ packages/
       draining.ts             # Version draining status + force-expire
       versions.ts             # Version status notifications
       dead-letters.ts         # Dead-letter management
+      quotas.ts               # Quota admin API (GET/PUT)
     queue/
       router.ts               # Deployment-aware message routing
       dispatcher.ts           # HTTP dispatch to pods
