@@ -65,6 +65,9 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Build workflow service
+        run: pnpm --filter @platformatic/workflow run build
+
       - name: Start workflow service
         run: |
           PORT=3042 npx wattpm start &
