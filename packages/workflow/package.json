@@ -1,6 +1,6 @@
 {
   "name": "@platformatic/workflow",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Workflow orchestration service for Vercel Workflow DevKit on Kubernetes",
   "type": "module",
   "engines": {
