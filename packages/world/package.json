@@ -1,6 +1,7 @@
 {
   "name": "@platformatic/world",
   "version": "0.3.0",
+  "description": "Platformatic World adapter for Vercel Workflow DevKit — drop-in World implementation for self-hosted Kubernetes",
   "type": "module",
   "engines": {
     "node": ">=22.19.0"
@@ -28,5 +29,11 @@
     "@types/node": "^22.15.0",
     "@workflow/world": "4.1.0-beta.10",
     "typescript": "^5.9.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/platformatic/platformatic-world.git",
+    "directory": "packages/world"
+  },
+  "license": "Apache-2.0"
 }
