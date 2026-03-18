@@ -70,7 +70,35 @@ npx wattpm start
 
 The service starts on `http://localhost:3042` by default. Without K8s, it runs in single-tenant mode — no authentication, one implicit application.
 
-### Use the World Client
+### Run a Next.js App Locally
+
+Apps using the Vercel Workflow SDK need a queue handler registered on startup. In Kubernetes with ICC this is automatic, but for local development your app must call `world.start()` itself.
+
+For Next.js, create an `instrumentation.ts` in your project root:
+
+```typescript
+// instrumentation.ts
+export async function register() {
+  if (process.env.PLT_WORLD_SERVICE_URL) {
+    const { createWorld } = await import('@platformatic/world')
+    const world = createWorld()
+    await world.start?.()
+  }
+}
+```
+
+Then start your app:
+
+```bash
+WORKFLOW_TARGET_WORLD=@platformatic/world \
+PLT_WORLD_SERVICE_URL=http://localhost:3042 \
+PORT=3000 \
+npx next start -p 3000
+```
+
+For other frameworks, call `world.start()` during your server's startup. See the [User Guide](./doc/user-guide.md#local-development-without-watt-or-icc) for details.
+
+### Use the World Client Directly
 
 ```typescript
 import { createPlatformaticWorld } from '@platformatic/world'
