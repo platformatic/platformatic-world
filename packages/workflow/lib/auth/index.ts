@@ -3,7 +3,7 @@ import { createK8sTokenValidator } from './k8s-token.ts'
 import { Unauthorized, Forbidden } from '../errors.ts'
 
 export interface AuthConfig {
-  mode: 'k8s-token' | 'none'
+  mode: 'k8s-token' | 'api-key' | 'both' | 'none'
   defaultAppId?: number
   k8s?: {
     apiServer: string

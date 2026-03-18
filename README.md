@@ -42,15 +42,30 @@ The `e2e/` directory contains a Next.js test app and end-to-end test suites (57 
 
 ## Quick Start
 
+### Using npx (no clone needed)
+
 ```bash
+# Start PostgreSQL
+docker run -d --name workflow-pg -e POSTGRES_USER=wf -e POSTGRES_PASSWORD=wf -e POSTGRES_DB=workflow -p 5434:5432 postgres:17-alpine
+
+# Start the workflow service
+npx @platformatic/workflow postgresql://wf:wf@localhost:5434/workflow
+```
+
+### From source
+
+```bash
+# Clone and install
+git clone https://github.com/platformatic/platformatic-world.git
+cd platformatic-world
+pnpm install
+
 # Start PostgreSQL
 docker compose up -d
 
-# Install dependencies
-pnpm install
-
 # Start the workflow service (single-tenant mode, no auth)
-node packages/workflow/src/server.ts
+cd packages/workflow
+npx wattpm start
 ```
 
 The service starts on `http://localhost:3042` by default. Without K8s, it runs in single-tenant mode — no authentication, one implicit application.
@@ -144,6 +159,10 @@ Supported event types: `run_created`, `run_started`, `run_completed`, `run_faile
 |---|---|---|
 | `GET` | `/runs/:runId` | Get run by ID |
 | `GET` | `/runs` | List runs (filters: `status`, `workflowName`, `deploymentId`) |
+| `POST` | `/runs/:runId/replay` | Replay a completed run (creates new run with same input, targets original version) |
+| `POST` | `/runs/:runId/cancel` | Cancel a running run |
+| `POST` | `/runs/:runId/wake-up` | Cancel active sleeps for a run |
+| `GET` | `/workflows/:workflowName/template` | Get step template from most recent completed run (query: `deploymentId`) |
 
 ### Steps
 
@@ -206,6 +225,8 @@ Supports `delaySeconds` for deferred delivery and `idempotencyKey` for deduplica
 | `GET` | `/api/v1/apps/:appId/versions/:deploymentId/status` | Get version draining status |
 | `POST` | `/api/v1/apps/:appId/versions/:deploymentId/expire` | Force-expire a deployment version |
 | `POST` | `/api/v1/versions/notify` | Notify version status change |
+| `GET` | `/api/v1/apps/:appId/quotas` | Get quotas for an app (returns defaults if none set) |
+| `PUT` | `/api/v1/apps/:appId/quotas` | Set/update quotas (`maxRuns`, `maxEventsPerRun`, `maxQueuePerMinute`) |
 
 ### Health & Observability
 
@@ -248,7 +269,7 @@ This gives ICC a single authoritative source for "are there any non-terminal wor
 
 ## Quotas & Rate Limiting
 
-Per-application quotas (configurable via `workflow_app_quotas` table):
+Per-application quotas (configurable via the admin API or the `workflow_app_quotas` table):
 
 | Quota | Default | Description |
 |---|---|---|
@@ -260,11 +281,7 @@ Exceeding a quota returns HTTP 429.
 
 ## Metrics
 
-The `/metrics` endpoint returns Prometheus-compatible metrics:
-
-- **Counters**: `wf_events_created_total`, `wf_runs_created_total`, `wf_messages_dispatched_total`, `wf_messages_dead_lettered_total`, `wf_messages_retried_total`
-- **Gauges**: `wf_active_runs`, `wf_queue_depth`, `wf_db_pool_total`, `wf_db_pool_idle`
-- **Summaries**: `wf_request_duration_ms`, `wf_queue_dispatch_duration_ms` (with p50, p95, p99 quantiles)
+The `/metrics` endpoint returns Prometheus-compatible metrics provided by the Platformatic runtime (HTTP request duration, status codes, Node.js runtime stats).
 
 ## Development
 
@@ -275,7 +292,7 @@ docker compose up -d
 # Install dependencies
 pnpm install
 
-# Run all unit/integration tests (65 workflow + 5 world)
+# Run all unit/integration tests (87 workflow + 12 world)
 pnpm test
 
 # Run Vercel-compatible e2e tests (57 tests — requires PostgreSQL on port 5434)
@@ -290,50 +307,53 @@ cd e2e && node --test --test-force-exit test/workflow.test.ts
 ```
 packages/
   workflow/
-    src/
-      app.ts                  # buildApp() factory
-      server.ts               # CLI entrypoint
-      lib/
-        db.ts                 # pg.Pool + Postgrator migrations
-        errors.ts             # Typed HTTP errors (@fastify/error)
-        auth/
-          index.ts            # Auth plugin (onRequest hook)
-          k8s-token.ts        # K8s ServiceAccount token validation
-      plugins/
-        apps.ts               # App provisioning
-        events.ts             # Event creation (main write path)
-        runs.ts               # Run queries
-        steps.ts              # Step queries
-        hooks.ts              # Hook queries
-        streams.ts            # Stream read/write
-        queue.ts              # Queue message ingestion
-        encryption.ts         # Per-run encryption keys
-        handlers.ts           # Pod handler registration
-        draining.ts           # Version draining status + force-expire
-        versions.ts           # Version status notifications
-        dead-letters.ts       # Dead-letter management
-        quotas.ts             # Quota checks + rate limiting
-        metrics.ts            # Prometheus /metrics endpoint
-        health.ts             # Health checks
-      queue/
-        router.ts             # Deployment-aware message routing
-        dispatcher.ts         # HTTP dispatch to pods
-        poller.ts             # Deferred delivery + retry + orphan detection
-        retry.ts              # Exponential backoff
-      migrations/
-        001.do.sql            # Full schema (auth, core, queue, encryption, quotas)
-    test/                     # 65 tests across 16 suites
+    cli.js                    # CLI entrypoint (npx @platformatic/workflow)
+    watt.json                 # Platformatic Service configuration (dist/plugins for production)
+    watt-dev.json             # Dev configuration (./plugins for local development)
+    lib/
+      db.ts                   # pg.Pool + Postgrator migrations
+      errors.ts               # Typed HTTP errors (@fastify/error)
+      quotas.ts               # Quota checks + rate limiting
+      auth/
+        index.ts              # Auth plugin (onRequest hook)
+        k8s-token.ts          # K8s ServiceAccount token validation
+    plugins/
+      db.ts                   # Database + auth initialization
+      auth.ts                 # Auth wiring
+      apps.ts                 # App provisioning + K8s bindings
+      events.ts               # Event creation (main write path)
+      runs.ts                 # Run queries + workflow template API
+      run-actions.ts          # Replay, cancel, wake-up
+      steps.ts                # Step queries
+      hooks.ts                # Hook queries
+      streams.ts              # Stream read/write
+      queue.ts                # Queue message ingestion
+      poller.ts               # Poller lifecycle management
+      encryption.ts           # Per-run encryption keys
+      handlers.ts             # Pod handler registration
+      draining.ts             # Version draining status + force-expire
+      versions.ts             # Version status notifications
+      dead-letters.ts         # Dead-letter management
+      quotas.ts               # Quota admin API (GET/PUT)
+    queue/
+      router.ts               # Deployment-aware message routing
+      dispatcher.ts           # HTTP dispatch to pods
+      poller.ts               # Deferred delivery + retry + orphan detection
+      retry.ts                # Exponential backoff
+    migrations/
+      001.do.sql              # Full schema (auth, core, queue, encryption, quotas)
+    test/                     # 87 tests across 19 suites
 
   world/
     src/
-      index.ts                # createPlatformaticWorld() factory
+      index.ts                # createPlatformaticWorld() + createWorld() factories
       lib/
         client.ts             # undici Pool HTTP client
         storage.ts            # Storage interface (runs, events, steps, hooks)
-        queue.ts              # Queue + createQueueHandler
+        queue.ts              # Queue + handler registration
         streamer.ts           # Stream read/write
         encryption.ts         # Encryption key fetching
-    test/                     # 5 integration tests
+    test/                     # 12 tests
 ```
 
 ## Design Document

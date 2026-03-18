@@ -6,5 +6,6 @@ export default neostandard({
     ...resolveIgnoresFromGitignore(),
     'e2e/app/.well-known/',
     'packages/world/dist/',
+    'packages/workflow/dist/',
   ],
 })

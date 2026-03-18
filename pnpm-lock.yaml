@@ -60,6 +60,9 @@ importers:
       '@platformatic/leader':
         specifier: ^0.2.0
         version: 0.2.0
+      '@platformatic/runtime':
+        specifier: ^3.41.0
+        version: 3.41.0
       '@platformatic/service':
         specifier: ^3.40.0
         version: 3.41.0(typescript@5.9.3)
@@ -91,6 +94,9 @@ importers:
       '@types/pg':
         specifier: ^8.15.4
         version: 8.18.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   packages/world:
     dependencies:

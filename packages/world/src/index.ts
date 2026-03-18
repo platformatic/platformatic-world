@@ -33,7 +33,7 @@ export function createPlatformaticWorld (config: PlatformaticWorldConfig): World
       if (!port) return
       const baseUrl = `http://localhost:${port}`
       await client.post('/handlers', {
-        podId: process.env.PLT_WORLD_POD_ID || `plt-world-${process.pid}`,
+        podId: `plt-world-${process.pid}`,
         deploymentVersion: config.deploymentVersion,
         endpoints: {
           workflow: `${baseUrl}/.well-known/workflow/v1/flow`,
