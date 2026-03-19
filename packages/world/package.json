@@ -1,6 +1,6 @@
 {
   "name": "@platformatic/world",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Platformatic World adapter for Vercel Workflow DevKit — drop-in World implementation for self-hosted Kubernetes",
   "type": "module",
   "engines": {
