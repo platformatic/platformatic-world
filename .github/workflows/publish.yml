@@ -31,6 +31,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -67,9 +68,7 @@ jobs:
 
       - name: Publish to npm
         if: inputs.npm
-        run: pnpm -r publish --no-git-checks --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm -r publish --no-git-checks --access public --provenance
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
