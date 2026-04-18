@@ -364,8 +364,7 @@ test('hookDisposeTest: hook token reuse after explicit disposal while running', 
 
 // ---- Webhooks ----
 
-// TODO: flaky on CI — respondWith: 'manual' relies on TransformStream timing sensitive to runner speed
-test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { skip: true, timeout: 120_000 }, async () => {
+test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 120_000 }, async () => {
   const runId = await triggerE2eWorkflow('webhookWorkflow')
 
   // Poll until all 3 hooks are created instead of a fixed sleep
@@ -697,26 +696,21 @@ test('health check endpoint (HTTP): flow and step endpoints respond', { timeout:
 
 // ---- .well-known/agent discovery ----
 
-test('wellKnownAgentWorkflow: step discovery in dot-prefixed directory', { timeout: 60_000, skip: true }, async () => {
-  // Skipped: the @workflow/next plugin's discovery (v5.0.0-beta.2) does
-  // not pick up `app/.well-known/agent/v1/steps.ts` on our Next.js build,
-  // so the workflow is absent from `manifest.workflows`. This also means
-  // the same test in Vercel's upstream e2e.test.ts will fail against our
-  // world until the plugin scans dot-prefixed app directories. Out of
-  // scope for the CBOR PR — upstream plugin fix required.
+test('wellKnownAgentWorkflow: step discovery in dot-prefixed directory', { timeout: 60_000 }, async () => {
   const manifestRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/manifest.json`)
-  if (!manifestRes.ok) return
+  assert.equal(manifestRes.status, 200)
   const manifest = await manifestRes.json() as {
     workflows: Record<string, Record<string, { workflowId: string }>>
   }
   const workflowFile = Object.keys(manifest.workflows).find((f: string) => f.includes('.well-known/agent'))
-  if (!workflowFile) return
-  const wfMeta = manifest.workflows[workflowFile]?.wellKnownAgentWorkflow
-  if (!wfMeta) return
+  assert.ok(workflowFile, `Could not find .well-known/agent workflow file in manifest. Keys: ${Object.keys(manifest.workflows).join(', ')}`)
+  const wfMeta = manifest.workflows[workflowFile].wellKnownAgentWorkflow
+  assert.ok(wfMeta, 'Could not find wellKnownAgentWorkflow in manifest')
 
   const { start: startWorkflow } = await import('workflow/api')
   const run = await startWorkflow(wfMeta, [5])
   const returnValue = await run.returnValue
+  // wellKnownAgentStep(5) => 5 * 2 = 10, then workflow adds 1 => 11
   assert.equal(returnValue, 11)
 })
 

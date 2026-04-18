@@ -1,5 +1,10 @@
 import { start } from 'workflow/api'
 import { NextResponse } from 'next/server'
+// Force the workflow plugin to discover workflows in dot-prefixed app dirs
+// (`.well-known/agent/v1/steps.ts`). Vercel's own workbench does the same
+// by importing from `app/api/chat/route.ts`. The import must be a side
+// effect only — exports aren't used here.
+import '@/app/.well-known/agent/v1/steps'
 import {
   addTenWorkflow,
   promiseAllWorkflow,
