@@ -550,7 +550,9 @@ test('stepFunctionAsStartArgWorkflow: step fn ref passed as start() argument', {
 
 test('health check (queue-based): workflow and step endpoints respond', { timeout: 60_000 }, async () => {
   const { healthCheck, getWorld } = await import('workflow/runtime')
-  const world = getWorld()
+  // getWorld is async in @workflow/core@5 — awaiting a Promise was passing
+  // a Promise as `world` and throwing "world.queue is not a function".
+  const world = await getWorld()
 
   const workflowResult = await healthCheck(world, 'workflow', { timeout: 30000 })
   assert.equal(workflowResult.healthy, true)
