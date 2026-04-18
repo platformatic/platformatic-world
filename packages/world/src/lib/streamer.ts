@@ -33,7 +33,19 @@ export function createStreamer (client: HttpClient) {
           query.startIndex = String(startIndex)
         }
         const readable = await client.getStream(`/streams/${name}`, query)
-        return Readable.toWeb(readable) as ReadableStream<Uint8Array>
+        const web = Readable.toWeb(readable) as ReadableStream<Uint8Array>
+        // Buffers from undici use a shared ArrayBuffer pool whose memory is
+        // not detachable. Downstream, the SDK enqueues into a ReadableByte-
+        // Stream which calls ArrayBuffer.transfer(), and a pooled buffer
+        // throws "ArrayBuffer is not detachable". Copy each chunk into a
+        // standalone ArrayBuffer at the boundary.
+        return web.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+          transform (chunk, controller) {
+            const copy = new Uint8Array(chunk.byteLength)
+            copy.set(chunk)
+            controller.enqueue(copy)
+          },
+        }))
       },
 
       async list (runId: string): Promise<string[]> {
@@ -47,10 +59,16 @@ export function createStreamer (client: HttpClient) {
         const result = await client.get(`/runs/${runId}/streams/${name}/chunks`, query)
         return {
           ...result,
-          data: result.data.map((chunk: { index: number; data: string }) => ({
-            index: chunk.index,
-            data: new Uint8Array(Buffer.from(chunk.data, 'base64')),
-          })),
+          data: result.data.map((chunk: { index: number; data: string }) => {
+            // Allocate a standalone ArrayBuffer per chunk. A Buffer from the
+            // shared pool isn't detachable, which breaks the SDK's stream
+            // transfer when the runtime tries to enqueue the chunk into a
+            // ReadableByteStream ("ArrayBuffer is not detachable").
+            const src = Buffer.from(chunk.data, 'base64')
+            const copy = new Uint8Array(src.byteLength)
+            copy.set(src)
+            return { index: chunk.index, data: copy }
+          }),
         }
       },
 
