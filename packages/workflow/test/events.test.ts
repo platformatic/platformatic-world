@@ -1,5 +1,6 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import { setupTest, teardownTest } from './helper.ts'
 import type { TestContext } from './helper.ts'
 
@@ -137,6 +138,11 @@ describe('events', () => {
   })
 
   it('should handle hook_created with token conflict', async () => {
+    // workflow_hooks has a partial unique index on token WHERE status='pending'
+    // that is global across apps — a hard-coded token would collide with
+    // leftovers from a crashed prior run (teardown only runs on success).
+    const token = `conflict-token-${randomBytes(8).toString('hex')}`
+
     // Create a run first
     const createRes = await ctx.app.inject({
       method: 'POST',
@@ -159,7 +165,7 @@ describe('events', () => {
         eventType: 'hook_created',
         correlationId: 'hook-1',
         specVersion: 2,
-        eventData: { token: 'unique-token-123' },
+        eventData: { token },
       },
     })
     assert.ok(JSON.parse(hookRes.body).hook)
@@ -173,7 +179,7 @@ describe('events', () => {
         eventType: 'hook_created',
         correlationId: 'hook-2',
         specVersion: 2,
-        eventData: { token: 'unique-token-123' },
+        eventData: { token },
       },
     })
     const conflict = JSON.parse(conflictRes.body)

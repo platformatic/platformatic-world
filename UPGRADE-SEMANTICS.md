@@ -328,3 +328,25 @@ The three world implementations each solve different parts of this problem:
 | Vercel | Yes (Vercel infrastructure) | Yes (built into queue system) | Safe |
 
 The missing layer for self-hosted Postgres production is a **deployment-aware message broker** — something that sits between the workflow runtime and the Postgres world, inspects the `deploymentId` on each run, and dispatches step/workflow executions to the correct running instance of the application. This is what Vercel's queue infrastructure provides out of the box and what a self-hosted setup would need to build or adopt to achieve the same safety guarantees.
+
+---
+
+## Spec Version and Transport Rollout
+
+`@platformatic/world` declares `specVersion = SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT` (3). This flows as follows:
+
+1. The **world** declares its highest supported spec version (`world.specVersion`).
+2. The **runtime** tags new runs with that value via `events.create('run_created', { specVersion })`. The server persists it in `workflow_runs.spec_version`.
+3. The **queue client** picks a transport per message: CBOR when `opts.specVersion >= 3`, JSON otherwise. Our client falls back to CBOR when `opts.specVersion` is missing, since every run we create is already v3.
+4. The **server** stores the message in its arriving encoding (`payload` JSONB or `payload_bytes` BYTEA + `payload_encoding = 'cbor'`). The dispatcher forwards with a matching `Content-Type`.
+
+### Three-step rollout
+
+1. Deploy a server that accepts CBOR (`@platformatic/workflow >= 0.7.0`) while clients continue sending JSON. No behaviour change yet — CBOR acceptance is additive.
+2. Deploy clients that send CBOR (`@platformatic/world >= 0.7.0`). Inbound mix moves toward `application/cbor`; verify with `SELECT payload_encoding, COUNT(*) FROM workflow_queue_messages GROUP BY 1`.
+3. Once all in-flight runs are v3, the JSON path is dormant. Kept indefinitely for handler back-compat (a v2 client can still talk to a v3 server).
+
+### Downgrade
+
+Forward-only. The `002.undo.sql` migration refuses to run while any `payload_encoding = 'cbor'` rows exist — drain the queue first, then roll back the server.
+

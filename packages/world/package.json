@@ -23,11 +23,12 @@
     "dist"
   ],
   "dependencies": {
+    "cbor-x": "1.6.0",
     "undici": "^7.8.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "@workflow/world": "4.1.0-beta.10",
+    "@workflow/world": "5.0.0-beta.1",
     "typescript": "^5.9.3"
   },
   "repository": {

@@ -79,6 +79,16 @@ const world = createPlatformaticWorld({
 })
 ```
 
+## Spec version support
+
+`@platformatic/world` declares `specVersion: SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT` (3). In practice:
+
+- Runs created by `start()` are tagged with spec v3.
+- Queue messages between client and server use CBOR framing. CBOR preserves `Uint8Array` natively (JSON does not), so binary workflow input survives the queue round-trip without base64 wrapping.
+- `createQueueHandler` accepts both CBOR and JSON inbound via a dual transport. A v3 client can be deployed against a v2-only server during rollout; a v2 client can be deployed against a v3 server.
+
+Peer dependency: `@workflow/world` ≥ 5.0.0-beta.1 (the first release exporting `SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT`).
+
 ## License
 
 Apache-2.0

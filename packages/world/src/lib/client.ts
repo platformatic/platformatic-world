@@ -85,6 +85,38 @@ export class HttpClient {
     return response.body.json()
   }
 
+  async postRaw (path: string, body: Buffer, contentType: string, query?: Record<string, string | undefined>): Promise<any> {
+    let fullPath = `${this.#baseUrl}${path}`
+    if (query) {
+      const url = new URL(`http://localhost${fullPath}`)
+      for (const [k, v] of Object.entries(query)) {
+        if (v !== undefined) url.searchParams.set(k, v)
+      }
+      fullPath = `${url.pathname}${url.search}`
+    }
+
+    const headers: Record<string, string> = { 'content-type': contentType, ...this.#authHeaders() }
+
+    const response = await this.#pool.request({
+      method: 'POST',
+      path: fullPath,
+      headers,
+      body,
+    })
+
+    if (response.statusCode >= 400) {
+      const text = await response.body.text()
+      throw createAPIError(response.statusCode, text)
+    }
+
+    if (response.statusCode === 204) {
+      await response.body.dump()
+      return undefined
+    }
+
+    return response.body.json()
+  }
+
   async get (path: string, query?: Record<string, string | undefined>): Promise<any> {
     const url = new URL(`http://localhost${this.#baseUrl}${path}`)
     if (query) {

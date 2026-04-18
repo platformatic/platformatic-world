@@ -6,7 +6,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "test": "pnpm -r --filter='!e2e-test-app' test",
+    "test": "pnpm --filter '@platformatic/world' --filter '@platformatic/workflow' test",
     "lint": "eslint",
     "test:e2e": "pnpm -C e2e test",
     "test:vercel": "pnpm -C e2e test:vercel"

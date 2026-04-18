@@ -214,15 +214,30 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'run_started': {
-          await client.query(
-            `UPDATE workflow_runs SET status = 'running', started_at = NOW(), updated_at = NOW()
-             WHERE id = $1 AND application_id = $2`,
+          // SDK v5 contract: events.create('run_started') must be idempotent.
+          // It is called on every queue invocation, not just the first — replays
+          // rely on the event log having exactly one run_started, so we must
+          // only insert the event when it is not already present.
+          const existing = await client.query(
+            `SELECT id FROM workflow_events
+             WHERE run_id = $1 AND application_id = $2 AND event_type = 'run_started'
+             LIMIT 1`,
             [rawRunId, appId]
           )
-          const eventRow = await insertEvent(client, rawRunId, appId, body)
+
+          let eventRow: any = null
+          if (existing.rows.length === 0) {
+            await client.query(
+              `UPDATE workflow_runs SET status = 'running', started_at = NOW(), updated_at = NOW()
+               WHERE id = $1 AND application_id = $2`,
+              [rawRunId, appId]
+            )
+            eventRow = await insertEvent(client, rawRunId, appId, body)
+          }
+
           const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
           if (!runRow) throw new RunNotFound(rawRunId)
-          result = { event: formatEvent(eventRow, resolveData), run: formatRun(runRow, resolveData) }
+          result = { event: eventRow ? formatEvent(eventRow, resolveData) : null, run: formatRun(runRow, resolveData) }
           break
         }
 

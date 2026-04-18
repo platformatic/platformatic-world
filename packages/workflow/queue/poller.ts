@@ -147,10 +147,16 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
           if (!route) {
             return { msg, route: null, result: null }
           }
-          const result = await dispatchMessage(
-            route.url, msg.queue_name, msg.id, msg.payload, msg.attempts
-          )
-          log.info(`[POLLER] dispatched msgId=${msg.id} queue=${msg.queue_name} status=${result.statusCode} timeoutSeconds=${result.timeoutSeconds} success=${result.success}`)
+          const result = await dispatchMessage({
+            url: route.url,
+            queueName: msg.queue_name,
+            messageId: msg.id,
+            payload: msg.payload,
+            payloadBytes: msg.payload_bytes,
+            payloadEncoding: msg.payload_encoding,
+            attempt: msg.attempts,
+          })
+          log.info(`[POLLER] dispatched msgId=${msg.id} queue=${msg.queue_name} encoding=${msg.payload_encoding} status=${result.statusCode} timeoutSeconds=${result.timeoutSeconds} success=${result.success}`)
           return { msg, route, result }
         })
       )
@@ -262,23 +268,30 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
 
   async function handleDispatchResult (client: pg.PoolClient, msg: any, result: DispatchResult): Promise<void> {
     if (result.success) {
+      // Re-enqueue preserves the original encoding so the next dispatch
+      // continues using the same Content-Type as the run's specVersion.
+      const payloadJson = msg.payload_encoding === 'json' ? JSON.stringify(msg.payload) : null
+      const payloadBytes = msg.payload_encoding === 'cbor' ? msg.payload_bytes : null
+
       if (typeof result.timeoutSeconds === 'number' && result.timeoutSeconds > 0) {
         const delaySecs = result.timeoutSeconds
         await client.query(
           `INSERT INTO workflow_queue_messages
-           (queue_name, run_id, deployment_version, application_id, payload, status, deliver_at)
-           VALUES ($1, $2, $3, $4, $5, 'deferred', NOW() + make_interval(secs => $6))`,
+           (queue_name, run_id, deployment_version, application_id,
+            payload, payload_bytes, payload_encoding, status, deliver_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'deferred', NOW() + make_interval(secs => $8))`,
           [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
-            JSON.stringify(msg.payload), delaySecs]
+            payloadJson, payloadBytes, msg.payload_encoding, delaySecs]
         )
         await client.query("SELECT pg_notify('deferred_messages', '{}')")
       } else if (typeof result.timeoutSeconds === 'number' && result.timeoutSeconds === 0) {
         await client.query(
           `INSERT INTO workflow_queue_messages
-           (queue_name, run_id, deployment_version, application_id, payload, status)
-           VALUES ($1, $2, $3, $4, $5, 'pending')`,
+           (queue_name, run_id, deployment_version, application_id,
+            payload, payload_bytes, payload_encoding, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
           [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
-            JSON.stringify(msg.payload)]
+            payloadJson, payloadBytes, msg.payload_encoding]
         )
         await client.query("SELECT pg_notify('deferred_messages', '{}')")
       }

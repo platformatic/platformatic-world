@@ -6,15 +6,17 @@
   "scripts": {
     "dev": "next dev --turbopack -p 3456",
     "build": "next build",
-    "test": "node --test --test-force-exit test/workflow.test.ts",
+    "test": "node --test --test-force-exit test/workflow.test.ts test/cbor-e2e.test.ts",
     "test:vercel": "node --test --test-force-exit test/vercel-e2e.test.ts"
   },
   "dependencies": {
     "@platformatic/world": "workspace:*",
+    "@workflow/world": "5.0.0-beta.1",
+    "cbor-x": "1.6.0",
     "next": "^15.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "workflow": "4.2.0-beta.67"
+    "workflow": "5.0.0-beta.2"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

@@ -290,6 +290,87 @@ async function streamsPlugin (app: FastifyInstance): Promise<void> {
 
     return result.rows.map(row => row.stream_name)
   })
+
+  // Paginated chunk retrieval. Cursor is the last chunk_index returned, so
+  // `WHERE chunk_index > cursor` advances the window. Default limit 100, max 1000.
+  app.get('/api/v1/apps/:appId/runs/:runId/streams/:name/chunks', async (request) => {
+    const { runId, name } = request.params as { runId: string; name: string }
+    const appId = request.appId
+    const query = request.query as { limit?: string; cursor?: string }
+
+    const rawLimit = query.limit ? parseInt(query.limit, 10) : 100
+    const limit = Math.max(1, Math.min(1000, Number.isFinite(rawLimit) ? rawLimit : 100))
+    const cursor = query.cursor ? parseInt(query.cursor, 10) : -1
+
+    const pageResult = await app.pg.query(
+      `SELECT chunk_index, data FROM workflow_stream_chunks
+       WHERE stream_name = $1 AND run_id = $2 AND application_id = $3
+         AND is_closed = FALSE AND chunk_index > $4
+       ORDER BY chunk_index ASC
+       LIMIT $5`,
+      [name, runId, appId, cursor, limit]
+    )
+
+    const data = pageResult.rows.map(row => ({
+      index: row.chunk_index as number,
+      data: (row.data as Buffer).toString('base64'),
+    }))
+
+    const nextCursor = data.length > 0 ? String(data[data.length - 1].index) : null
+
+    // hasMore: is there any chunk beyond the last one returned?
+    let hasMore = false
+    if (nextCursor !== null) {
+      const moreResult = await app.pg.query(
+        `SELECT 1 FROM workflow_stream_chunks
+         WHERE stream_name = $1 AND run_id = $2 AND application_id = $3
+           AND is_closed = FALSE AND chunk_index > $4
+         LIMIT 1`,
+        [name, runId, appId, Number(nextCursor)]
+      )
+      hasMore = moreResult.rows.length > 0
+    }
+
+    const closedResult = await app.pg.query(
+      `SELECT 1 FROM workflow_stream_chunks
+       WHERE stream_name = $1 AND run_id = $2 AND application_id = $3 AND is_closed = TRUE
+       LIMIT 1`,
+      [name, runId, appId]
+    )
+    const done = closedResult.rows.length > 0
+
+    return {
+      data,
+      cursor: hasMore ? nextCursor : null,
+      hasMore,
+      done,
+    }
+  })
+
+  // Stream metadata: tailIndex (-1 if no chunks) + done flag.
+  app.get('/api/v1/apps/:appId/runs/:runId/streams/:name/info', async (request) => {
+    const { runId, name } = request.params as { runId: string; name: string }
+    const appId = request.appId
+
+    const tailResult = await app.pg.query(
+      `SELECT COALESCE(MAX(chunk_index), -1)::int AS tail_index
+       FROM workflow_stream_chunks
+       WHERE stream_name = $1 AND run_id = $2 AND application_id = $3 AND is_closed = FALSE`,
+      [name, runId, appId]
+    )
+
+    const closedResult = await app.pg.query(
+      `SELECT 1 FROM workflow_stream_chunks
+       WHERE stream_name = $1 AND run_id = $2 AND application_id = $3 AND is_closed = TRUE
+       LIMIT 1`,
+      [name, runId, appId]
+    )
+
+    return {
+      tailIndex: tailResult.rows[0].tail_index as number,
+      done: closedResult.rows.length > 0,
+    }
+  })
 }
 
 export default fp(streamsPlugin, { name: 'streams', dependencies: ['auth'] })

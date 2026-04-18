@@ -123,6 +123,11 @@ export function createStorage (client: HttpClient) {
         return result
       },
 
+      get: async (runId: string, eventId: string, params?: any) => {
+        const result = await client.get(`/runs/${runId}/events/${eventId}`, buildQuery(params))
+        return restoreEntity(result)
+      },
+
       list: async (params: any) => {
         const result = await client.get(`/runs/${params.runId}/events`, buildQuery(params))
         return coerceResponseDates(result)

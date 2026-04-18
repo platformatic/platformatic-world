@@ -1,4 +1,5 @@
 import { request as undiciRequest } from 'undici'
+import { decode, encode } from 'cbor-x'
 
 export interface DispatchResult {
   success: boolean
@@ -6,25 +7,39 @@ export interface DispatchResult {
   statusCode: number
 }
 
-export async function dispatchMessage (
-  url: string,
-  queueName: string,
-  messageId: number,
-  message: unknown,
+export interface DispatchInput {
+  url: string
+  queueName: string
+  messageId: number
+  payload: unknown
+  payloadBytes: Buffer | null
+  payloadEncoding: 'json' | 'cbor'
   attempt: number
-): Promise<DispatchResult> {
+}
+
+export async function dispatchMessage (input: DispatchInput): Promise<DispatchResult> {
+  const meta = {
+    queueName: input.queueName,
+    messageId: `msg_${input.messageId}`,
+    attempt: input.attempt,
+  }
+
+  let body: Buffer
+  let contentType: string
+  if (input.payloadEncoding === 'cbor') {
+    const message = decode(input.payloadBytes!)
+    body = Buffer.from(encode({ message, meta }))
+    contentType = 'application/cbor'
+  } else {
+    body = Buffer.from(JSON.stringify({ message: input.payload, meta }))
+    contentType = 'application/json'
+  }
+
   try {
-    const response = await undiciRequest(url, {
+    const response = await undiciRequest(input.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        meta: {
-          queueName,
-          messageId: `msg_${messageId}`,
-          attempt,
-        },
-      }),
+      headers: { 'content-type': contentType },
+      body,
       headersTimeout: 30_000,
       bodyTimeout: 300_000, // 5 minutes for step execution
     })
@@ -33,10 +48,10 @@ export async function dispatchMessage (
 
     if (statusCode >= 200 && statusCode < 300) {
       try {
-        const body = await response.body.json() as { timeoutSeconds?: number }
+        const parsed = await response.body.json() as { timeoutSeconds?: number }
         return {
           success: true,
-          timeoutSeconds: body?.timeoutSeconds,
+          timeoutSeconds: parsed?.timeoutSeconds,
           statusCode,
         }
       } catch {
@@ -50,9 +65,9 @@ export async function dispatchMessage (
     if (statusCode === 425) {
       let delaySecs = 1
       try {
-        const body = await response.body.json() as { meta?: { retryAfter?: string } }
-        if (body?.meta?.retryAfter) {
-          const retryAt = new Date(body.meta.retryAfter)
+        const parsed = await response.body.json() as { meta?: { retryAfter?: string } }
+        if (parsed?.meta?.retryAfter) {
+          const retryAt = new Date(parsed.meta.retryAfter)
           delaySecs = Math.max(1, Math.ceil((retryAt.getTime() - Date.now()) / 1000))
         }
       } catch {

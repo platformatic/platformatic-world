@@ -1,6 +1,7 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
+import { randomBytes } from 'node:crypto'
 import { setupTest, teardownTest, type TestContext } from './helper.ts'
 import { createK8sTokenValidator } from '../lib/auth/k8s-token.ts'
 
@@ -61,8 +62,13 @@ describe('k8s-token validator', () => {
   })
 
   it('should validate app service account with k8s binding', async () => {
-    // Create app and binding in DB
-    const appId = `k8s-test-${Date.now()}`
+    // Randomize namespace + SA per run so stale bindings from crashed prior
+    // runs (app-scoped teardown won't clear them) don't pollute this run's
+    // validator output.
+    const suffix = randomBytes(4).toString('hex')
+    const namespace = `my-ns-${suffix}`
+    const serviceAccount = `my-sa-${suffix}`
+    const appId = `k8s-test-${suffix}`
     await ctx.app.pg.query(
       'INSERT INTO workflow_applications (app_id) VALUES ($1)',
       [appId]
@@ -75,14 +81,14 @@ describe('k8s-token validator', () => {
     await ctx.app.pg.query(
       `INSERT INTO workflow_app_k8s_bindings (application_id, namespace, service_account)
        VALUES ($1, $2, $3)`,
-      [applicationId, 'my-ns', 'my-sa']
+      [applicationId, namespace, serviceAccount]
     )
 
     mockServer = createMockK8sApi(() => ({
       body: {
         status: {
           authenticated: true,
-          user: { username: 'system:serviceaccount:my-ns:my-sa' },
+          user: { username: `system:serviceaccount:${namespace}:${serviceAccount}` },
         },
       },
     }))
@@ -95,15 +101,16 @@ describe('k8s-token validator', () => {
       adminServiceAccount: 'platformatic:platformatic',
     })
 
-    const result = await validate('app-token-456')
-    assert.ok(result)
-    assert.equal(result.isAdmin, false)
-    assert.deepEqual(result.applicationIds, [applicationId])
-
-    // Cleanup
-    await ctx.app.pg.query('DELETE FROM workflow_app_k8s_bindings WHERE application_id = $1', [applicationId])
-    await ctx.app.pg.query('DELETE FROM workflow_applications WHERE app_id = $1', [appId])
-    mockServer.close()
+    try {
+      const result = await validate('app-token-456')
+      assert.ok(result)
+      assert.equal(result.isAdmin, false)
+      assert.deepEqual(result.applicationIds, [applicationId])
+    } finally {
+      await ctx.app.pg.query('DELETE FROM workflow_app_k8s_bindings WHERE application_id = $1', [applicationId])
+      await ctx.app.pg.query('DELETE FROM workflow_applications WHERE app_id = $1', [appId])
+      mockServer.close()
+    }
   })
 
   it('should reject unauthenticated tokens', async () => {
