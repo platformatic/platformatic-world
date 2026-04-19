@@ -54,6 +54,53 @@ async function waitForReady (url: string, timeoutMs = 60_000, acceptAny = false)
   throw new Error(`Timed out waiting for ${url}`)
 }
 
+export async function waitForRunStatus (wfUrl: string, runId: string, status: string, timeoutMs = 30_000): Promise<any> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const res = await fetch(`${wfUrl}/api/v1/apps/default/runs/${runId}`)
+    if (res.ok) {
+      const run = await res.json() as any
+      if (run.status === status) return run
+      if (status !== 'failed' && status !== 'cancelled' &&
+          (run.status === 'failed' || run.status === 'cancelled')) {
+        throw new Error(`Run ${runId} reached terminal state ${run.status}: ${JSON.stringify(run.error)}`)
+      }
+    }
+    await sleep(250)
+  }
+  throw new Error(`Timed out waiting for run ${runId} -> ${status}`)
+}
+
+export async function waitForHookByToken (wfUrl: string, token: string, timeoutMs = 15_000): Promise<any> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const res = await fetch(`${wfUrl}/api/v1/apps/default/hooks/by-token/${encodeURIComponent(token)}`)
+    if (res.ok) return res.json()
+    await sleep(250)
+  }
+  throw new Error(`Timed out waiting for hook token ${token}`)
+}
+
+// Hook resume needs the SDK's own payload serialization (devalue framing).
+// Posting the event via plain HTTP from the test process would skip that
+// and the workflow replay wouldn't be able to decode the resume payload.
+let sdkResumeHook: ((tokenOrHook: any, payload: any) => Promise<any>) | undefined
+
+export async function configureWorldFromEnvAndLoadSdk (wfUrl: string, deploymentVersion: string): Promise<void> {
+  process.env.WORKFLOW_TARGET_WORLD = '@platformatic/world'
+  process.env.PLT_WORLD_SERVICE_URL = wfUrl
+  process.env.PLT_WORLD_APP_ID = 'default'
+  process.env.PLT_WORLD_DEPLOYMENT_VERSION = deploymentVersion
+  if (sdkResumeHook) return
+  const api = await import('workflow/api')
+  sdkResumeHook = api.resumeHook
+}
+
+export async function resumeHook (token: string, payload: any): Promise<any> {
+  if (!sdkResumeHook) throw new Error('configureWorldFromEnvAndLoadSdk() must be called first')
+  return sdkResumeHook(token, payload)
+}
+
 export async function setup (): Promise<E2eContext> {
   const wfPort = await pickFreePort()
   const nextPort = await pickFreePort()

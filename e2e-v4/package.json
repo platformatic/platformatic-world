@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "WORKFLOW_PUBLIC_MANIFEST=1 next build",
-    "test": "node --test --test-force-exit test/workflow.test.ts"
+    "test": "node --test --test-force-exit --test-concurrency=1 test/workflow.test.ts test/cbor-e2e.test.ts test/compat.test.ts"
   },
   "dependencies": {
     "@platformatic/world": "workspace:*",
+    "@workflow/world": "4.1.1",
     "next": "^15.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

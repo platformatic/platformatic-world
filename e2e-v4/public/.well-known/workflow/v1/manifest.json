@@ -1,6 +1,16 @@
 {
   "version": "1.0.0",
   "steps": {
+    "node_modules/.pnpm/workflow@4.2.4_@nestjs+common@11.1.16_reflect-metadata@0.2.2_rxjs@7.8.2__@nestjs+core@1_a93f1f13713886a976aa569faebd7cd3/node_modules/workflow/dist/stdlib.js": {
+      "fetch": {
+        "stepId": "step//workflow@4.2.4//fetch"
+      }
+    },
+    "workflows/simple.ts": {
+      "add": {
+        "stepId": "step//./workflows/simple//add"
+      }
+    },
     "node_modules/.pnpm/workflow@4.2.4_@nestjs+common@11.1.16_reflect-metadata@0.2.2_rxjs@7.8.2__@nestjs+core@1_a93f1f13713886a976aa569faebd7cd3/node_modules/workflow/dist/internal/builtins.js": {
       "__builtin_response_array_buffer": {
         "stepId": "__builtin_response_array_buffer"
@@ -12,9 +22,18 @@
         "stepId": "__builtin_response_text"
       }
     },
-    "workflows/simple.ts": {
-      "add": {
-        "stepId": "step//./workflows/simple//add"
+    "workflows/compat.ts": {
+      "closeOutputStream": {
+        "stepId": "step//./workflows/compat//closeOutputStream"
+      },
+      "retryUntilAttempt3": {
+        "stepId": "step//./workflows/compat//retryUntilAttempt3"
+      },
+      "throwFatalError": {
+        "stepId": "step//./workflows/compat//throwFatalError"
+      },
+      "writeTextToStream": {
+        "stepId": "step//./workflows/compat//writeTextToStream"
       }
     }
   },
@@ -45,6 +64,191 @@
             {
               "id": "e_start_end",
               "source": "start",
+              "target": "end",
+              "type": "default"
+            }
+          ]
+        }
+      }
+    },
+    "workflows/compat.ts": {
+      "errorFatalWorkflow": {
+        "workflowId": "workflow//./workflows/compat//errorFatalWorkflow",
+        "graph": {
+          "nodes": [
+            {
+              "id": "start",
+              "type": "workflowStart",
+              "data": {
+                "label": "Start: errorFatalWorkflow",
+                "nodeKind": "workflow_start"
+              }
+            },
+            {
+              "id": "end",
+              "type": "workflowEnd",
+              "data": {
+                "label": "Return",
+                "nodeKind": "workflow_end"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_start_end",
+              "source": "start",
+              "target": "end",
+              "type": "default"
+            }
+          ]
+        }
+      },
+      "errorRetrySuccessWorkflow": {
+        "workflowId": "workflow//./workflows/compat//errorRetrySuccessWorkflow",
+        "graph": {
+          "nodes": [
+            {
+              "id": "start",
+              "type": "workflowStart",
+              "data": {
+                "label": "Start: errorRetrySuccessWorkflow",
+                "nodeKind": "workflow_start"
+              }
+            },
+            {
+              "id": "end",
+              "type": "workflowEnd",
+              "data": {
+                "label": "Return",
+                "nodeKind": "workflow_end"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_start_end",
+              "source": "start",
+              "target": "end",
+              "type": "default"
+            }
+          ]
+        }
+      },
+      "hookWorkflow": {
+        "workflowId": "workflow//./workflows/compat//hookWorkflow",
+        "graph": {
+          "nodes": [
+            {
+              "id": "start",
+              "type": "workflowStart",
+              "data": {
+                "label": "Start: hookWorkflow",
+                "nodeKind": "workflow_start"
+              }
+            },
+            {
+              "id": "node_0",
+              "type": "primitive",
+              "data": {
+                "label": "createHook",
+                "nodeKind": "primitive"
+              }
+            },
+            {
+              "id": "end",
+              "type": "workflowEnd",
+              "data": {
+                "label": "Return",
+                "nodeKind": "workflow_end"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_start_node_0",
+              "source": "start",
+              "target": "node_0",
+              "type": "default"
+            },
+            {
+              "id": "e_node_0_end",
+              "source": "node_0",
+              "target": "end",
+              "type": "default"
+            }
+          ]
+        }
+      },
+      "outputStreamWorkflow": {
+        "workflowId": "workflow//./workflows/compat//outputStreamWorkflow",
+        "graph": {
+          "nodes": [
+            {
+              "id": "start",
+              "type": "workflowStart",
+              "data": {
+                "label": "Start: outputStreamWorkflow",
+                "nodeKind": "workflow_start"
+              }
+            },
+            {
+              "id": "end",
+              "type": "workflowEnd",
+              "data": {
+                "label": "Return",
+                "nodeKind": "workflow_end"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_start_end",
+              "source": "start",
+              "target": "end",
+              "type": "default"
+            }
+          ]
+        }
+      },
+      "sleepingWorkflow": {
+        "workflowId": "workflow//./workflows/compat//sleepingWorkflow",
+        "graph": {
+          "nodes": [
+            {
+              "id": "start",
+              "type": "workflowStart",
+              "data": {
+                "label": "Start: sleepingWorkflow",
+                "nodeKind": "workflow_start"
+              }
+            },
+            {
+              "id": "node_0",
+              "type": "primitive",
+              "data": {
+                "label": "sleep",
+                "nodeKind": "primitive"
+              }
+            },
+            {
+              "id": "end",
+              "type": "workflowEnd",
+              "data": {
+                "label": "Return",
+                "nodeKind": "workflow_end"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_start_node_0",
+              "source": "start",
+              "target": "node_0",
+              "type": "default"
+            },
+            {
+              "id": "e_node_0_end",
+              "source": "node_0",
               "target": "end",
               "type": "default"
             }
