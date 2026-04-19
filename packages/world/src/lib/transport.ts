@@ -1,3 +1,10 @@
+// The {Json,Cbor,Dual}Transport classes below are adapted from
+// @workflow/world-vercel (packages/world-vercel/src/queue.ts). Same wire
+// contract: `application/cbor` content-type, CBOR-first deserialization
+// with JSON fallback, byte-for-byte spec parity with Vercel's queue path.
+// Copyright 2025 Vercel Inc., Apache-2.0.
+// See NOTICE for details.
+
 import { decode, encode } from 'cbor-x'
 
 export interface Transport {
