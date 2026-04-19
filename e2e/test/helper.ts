@@ -41,9 +41,7 @@ export function startProcess (cmd: string, args: string[], env: Record<string, s
     kill () {
       try {
         process.kill(-proc.pid!, 'SIGKILL')
-      } catch {
-        // Process already dead
-      }
+      } catch {}
     },
   }
 }
@@ -54,9 +52,7 @@ export async function waitForReady (url: string, timeoutMs = 60_000): Promise<vo
     try {
       const res = await fetch(url)
       if (res.ok) return
-    } catch {
-      // not ready yet
-    }
+    } catch {}
     await sleep(500)
   }
   throw new Error(`Timed out waiting for ${url}`)
@@ -97,7 +93,6 @@ export async function waitForHookByToken (token: string, timeoutMs = 15_000): Pr
   throw new Error(`Timed out waiting for hook with token ${token}`)
 }
 
-// Lazy-loaded SDK function (require world to be configured first)
 let sdkResumeHook: ((tokenOrHook: any, payload: any) => Promise<any>) | undefined
 
 export async function loadSdkHookFunctions (): Promise<void> {
@@ -209,17 +204,13 @@ export async function triggerPagesWorkflow (workflowFn: string, args: any[] = []
 }
 
 export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: SpawnedProcess }> {
-  // Kill any leftover processes on our ports. Tests run with metrics
-  // disabled (watt-test.json), so 9090 is not ours to claim — an external
-  // wattpm on the dev machine may legitimately hold it.
   killPort(WF_PORT)
   killPort(NEXT_PORT)
   await waitForPortFree(WF_PORT)
   await waitForPortFree(NEXT_PORT)
 
-  // 1. Start the workflow service in single-tenant mode via Watt.
-  // watt-test.json disables runtime.metrics (otherwise wattpm tries to bind
-  // 9090 and logs a FATAL when another process holds it).
+  // watt-test.json disables runtime.metrics — otherwise wattpm tries to
+  // bind 9090 and FATALs when another process on the dev machine holds it.
   const wfService = startProcess('npx', ['wattpm', 'start', '-c', 'watt-test.json'], {
     DATABASE_URL: DB_URL,
     PORT: String(WF_PORT),
@@ -227,14 +218,12 @@ export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: Sp
 
   await waitForReady(`${WF_URL}/api/v1/apps/default/runs`)
 
-  // 2. Clean up stale data from any previous test runs
   const { default: pg } = await import('pg')
   const client = new pg.Client(DB_URL)
   await client.connect()
   await client.query('TRUNCATE workflow_events, workflow_hooks, workflow_queue_messages, workflow_steps, workflow_waits, workflow_stream_chunks, workflow_runs, workflow_queue_handlers CASCADE')
   await client.end()
 
-  // 3. Start the Next.js app (already built)
   const nextApp = startProcess('npx', ['next', 'start', '-p', String(NEXT_PORT)], {
     WORKFLOW_TARGET_WORLD: '@platformatic/world',
     PLT_WORLD_SERVICE_URL: WF_URL,
@@ -244,10 +233,8 @@ export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: Sp
 
   await waitForReady(NEXT_URL)
 
-  // 4. Register queue handlers
   await registerHandlers()
 
-  // 5. Configure the world for SDK functions in the test process
   process.env.WORKFLOW_TARGET_WORLD = '@platformatic/world'
   process.env.PLT_WORLD_SERVICE_URL = WF_URL
   process.env.PLT_WORLD_APP_ID = 'default'
