@@ -1,0 +1,23 @@
+{
+  "name": "e2e-v4-compat-test",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "WORKFLOW_PUBLIC_MANIFEST=1 next build",
+    "test": "node --test --test-force-exit test/workflow.test.ts"
+  },
+  "dependencies": {
+    "@platformatic/world": "workspace:*",
+    "next": "^15.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "workflow": "4.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.0.0",
+    "pg": "^8.20.0",
+    "typescript": "^5.9.3"
+  }
+}

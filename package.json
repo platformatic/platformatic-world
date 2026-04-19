@@ -8,8 +8,9 @@
   "scripts": {
     "test": "pnpm --filter '@platformatic/world' --filter '@platformatic/workflow' test",
     "lint": "eslint",
-    "test:e2e": "pnpm -C e2e test",
-    "test:vercel": "pnpm -C e2e test:vercel"
+    "test:e2e:v5": "pnpm -C e2e-v5 test",
+    "test:e2e:v4": "pnpm -C e2e-v4 test",
+    "test:e2e:vercel": "pnpm -C e2e-v5 test:vercel"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

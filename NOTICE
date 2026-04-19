@@ -6,20 +6,20 @@ This product includes code adapted from the Vercel Workflow SDK.
 
 The following files contain code adapted from the Vercel Workflow SDK e2e test suite:
 
-  e2e/workflows/e2e.ts                — workflow definitions
-  e2e/workflows/helpers.ts            — cross-file error helper functions
-  e2e/workflows/_imported_step_only.ts — step-only file (no workflow)
-  e2e/workflows/98_duplicate_case.ts   — duplicate workflow for ID collision testing
-  e2e/workflows/serde-models.ts        — cross-context serialization models
-  e2e/workflows/serde-steps.ts         — cross-context serialization steps
-  e2e/lib/steps/paths-alias-test.ts    — path alias test helper
-  e2e/app/.well-known/agent/v1/steps.ts — .well-known/agent discovery test
-  e2e/pages/api/trigger-pages.ts        — Pages Router trigger endpoint
-  e2e/test/vercel-e2e.test.ts          — e2e test scenarios (including the
+  e2e-v5/workflows/e2e.ts                — workflow definitions
+  e2e-v5/workflows/helpers.ts            — cross-file error helper functions
+  e2e-v5/workflows/_imported_step_only.ts — step-only file (no workflow)
+  e2e-v5/workflows/98_duplicate_case.ts   — duplicate workflow for ID collision testing
+  e2e-v5/workflows/serde-models.ts        — cross-context serialization models
+  e2e-v5/workflows/serde-steps.ts         — cross-context serialization steps
+  e2e-v5/lib/steps/paths-alias-test.ts    — path alias test helper
+  e2e-v5/app/.well-known/agent/v1/steps.ts — .well-known/agent discovery test
+  e2e-v5/pages/api/trigger-pages.ts        — Pages Router trigger endpoint
+  e2e-v5/test/vercel-e2e.test.ts          — e2e test scenarios (including the
                                          resilient-start and outputStream
                                          getTailIndex/getChunks ports from
                                          packages/core/e2e/e2e.test.ts)
-  e2e/test/helper.ts                   — shared test infrastructure
+  e2e-v5/test/helper.ts                   — shared test infrastructure
 
 The following file contains code adapted from the @workflow/world-vercel package:
 

@@ -1,3 +1,4 @@
 packages:
   - 'packages/*'
-  - 'e2e'
+  - 'e2e-v5'
+  - 'e2e-v4'

@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@platformatic/world": "workspace:*",
-    "@workflow/world": "5.0.0-beta.1",
+    "@workflow/world": "4.1.1",
     "cbor-x": "1.6.0",
     "next": "^15.3.0",
     "react": "^19.0.0",

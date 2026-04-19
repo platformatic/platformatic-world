@@ -25,8 +25,9 @@ pnpm test
 node --test --test-concurrency=1 packages/workflow/test/events.test.ts
 
 # Run e2e tests (requires PostgreSQL on port 5434)
-pnpm test:e2e
-pnpm test:vercel
+pnpm test:e2e:v5      # smoke suite against workflow@5.0.0-beta SDK
+pnpm test:e2e:v4      # smoke suite against workflow@4.2.x stable SDK
+pnpm test:e2e:vercel  # full Vercel-ported suite (~220s)
 ```
 
 ## Monorepo Layout
@@ -35,7 +36,8 @@ pnpm workspace with three packages:
 
 - **`packages/workflow/`** (`@platformatic/workflow`) — Fastify 5 REST API. Owns storage, queue routing, deployment lifecycle. Multi-tenant with per-app isolation.
 - **`packages/world/`** (`@platformatic/world`) — Thin HTTP client (undici Pool) implementing the `@workflow/world` `World` interface.
-- **`e2e/`** — Next.js test app + end-to-end test suites (Vercel-compatible + integration).
+- **`e2e-v5/`** — Next.js test app + end-to-end test suites on `workflow@5.0.0-beta.x` (matches Vercel's main-branch CI).
+- **`e2e-v4/`** — Same workbench pattern, pinned to `workflow@4.2.x` stable. Guards the v4 runtime path.
 
 ## TypeScript
 

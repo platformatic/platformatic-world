@@ -1,0 +1,57 @@
+{
+  "version": "1.0.0",
+  "steps": {
+    "node_modules/.pnpm/workflow@4.2.4_@nestjs+common@11.1.16_reflect-metadata@0.2.2_rxjs@7.8.2__@nestjs+core@1_a93f1f13713886a976aa569faebd7cd3/node_modules/workflow/dist/internal/builtins.js": {
+      "__builtin_response_array_buffer": {
+        "stepId": "__builtin_response_array_buffer"
+      },
+      "__builtin_response_json": {
+        "stepId": "__builtin_response_json"
+      },
+      "__builtin_response_text": {
+        "stepId": "__builtin_response_text"
+      }
+    },
+    "workflows/simple.ts": {
+      "add": {
+        "stepId": "step//./workflows/simple//add"
+      }
+    }
+  },
+  "workflows": {
+    "workflows/simple.ts": {
+      "addTenWorkflow": {
+        "workflowId": "workflow//./workflows/simple//addTenWorkflow",
+        "graph": {
+          "nodes": [
+            {
+              "id": "start",
+              "type": "workflowStart",
+              "data": {
+                "label": "Start: addTenWorkflow",
+                "nodeKind": "workflow_start"
+              }
+            },
+            {
+              "id": "end",
+              "type": "workflowEnd",
+              "data": {
+                "label": "Return",
+                "nodeKind": "workflow_end"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_start_end",
+              "source": "start",
+              "target": "end",
+              "type": "default"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "classes": {}
+}

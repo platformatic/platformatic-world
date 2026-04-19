@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "@workflow/world": "5.0.0-beta.1",
+    "@workflow/world": "4.1.1",
     "typescript": "^5.9.3"
   },
   "repository": {
