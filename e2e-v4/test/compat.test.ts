@@ -68,7 +68,7 @@ test('v4: outputStreamWorkflow — getWritable() routes through flat streamer me
   await client.connect()
   try {
     const { rows } = await client.query(
-      `SELECT chunk_index FROM workflow_stream_chunks WHERE run_id = $1 AND is_closed = FALSE ORDER BY chunk_index ASC`,
+      'SELECT chunk_index FROM workflow_stream_chunks WHERE run_id = $1 AND is_closed = FALSE ORDER BY chunk_index ASC',
       [runId]
     )
     assert.ok(rows.length >= 1, `expected ≥ 1 chunk, got ${rows.length}`)
