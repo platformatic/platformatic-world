@@ -132,6 +132,96 @@ describe('streams', () => {
     assert.equal(readRes.body, 'bbbccc')
   })
 
+  it('getInfo returns tailIndex=-1 before any chunks', async () => {
+    const streamName = `stream-info-empty-${Date.now()}`
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/streams/${streamName}/info`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+    })
+    assert.equal(res.statusCode, 200)
+    const info = JSON.parse(res.body)
+    assert.equal(info.tailIndex, -1)
+    assert.equal(info.done, false)
+  })
+
+  it('getInfo returns tail and done=true after close', async () => {
+    const streamName = `stream-info-${Date.now()}`
+
+    for (const chunk of ['aa', 'bb', 'cc']) {
+      await ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/apps/${ctx.appId}/runs/${runId}/streams/${streamName}`,
+        headers: { authorization: `Bearer ${ctx.apiKey}`, 'content-type': 'application/json' },
+        payload: JSON.stringify(chunk),
+      })
+    }
+
+    let res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/streams/${streamName}/info`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+    })
+    let info = JSON.parse(res.body)
+    assert.equal(info.tailIndex, 2)
+    assert.equal(info.done, false)
+
+    await ctx.app.inject({
+      method: 'PUT',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/streams/${streamName}`,
+      headers: {
+        authorization: `Bearer ${ctx.apiKey}`,
+        'content-type': 'application/json',
+        'x-stream-done': 'true',
+      },
+      payload: JSON.stringify({}),
+    })
+
+    res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/streams/${streamName}/info`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+    })
+    info = JSON.parse(res.body)
+    assert.equal(info.tailIndex, 2)
+    assert.equal(info.done, true)
+  })
+
+  it('getChunks paginates with cursor', async () => {
+    const streamName = `stream-chunks-${Date.now()}`
+
+    const chunks = ['alpha', 'beta', 'gamma', 'delta']
+    for (const c of chunks) {
+      await ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/apps/${ctx.appId}/runs/${runId}/streams/${streamName}`,
+        headers: { authorization: `Bearer ${ctx.apiKey}`, 'content-type': 'application/json' },
+        payload: JSON.stringify(c),
+      })
+    }
+
+    const collected: string[] = []
+    let cursor: string | null = null
+    let iterations = 0
+    do {
+      const qs = cursor ? `?limit=2&cursor=${cursor}` : '?limit=2'
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/apps/${ctx.appId}/runs/${runId}/streams/${streamName}/chunks${qs}`,
+        headers: { authorization: `Bearer ${ctx.apiKey}` },
+      })
+      assert.equal(res.statusCode, 200)
+      const page = JSON.parse(res.body) as { data: { index: number; data: string }[]; cursor: string | null; hasMore: boolean; done: boolean }
+      for (const ch of page.data) {
+        collected.push(Buffer.from(ch.data, 'base64').toString('utf-8'))
+      }
+      cursor = page.cursor
+      if (++iterations > 10) throw new Error('pagination runaway')
+    } while (cursor)
+
+    assert.deepEqual(collected, chunks)
+  })
+
   it('should list streams for a run', async () => {
     const streamName = `stream-list-${Date.now()}`
 

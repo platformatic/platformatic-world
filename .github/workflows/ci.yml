@@ -123,22 +123,36 @@ jobs:
       - name: Build workflow service
         run: pnpm --filter @platformatic/workflow run build
 
-      - name: Build Next.js e2e app
-        run: pnpm -C e2e build
+      - name: Build Next.js e2e app (v5 SDK)
+        run: pnpm -C e2e-v5 build
         env:
           WORKFLOW_TARGET_WORLD: '@platformatic/world'
           PLT_WORLD_SERVICE_URL: http://localhost:3042
           PLT_WORLD_APP_ID: default
           PLT_WORLD_DEPLOYMENT_VERSION: e2e-test
 
-      - name: Run e2e tests
-        run: pnpm test:e2e
+      - name: Build Next.js e2e app (v4 SDK)
+        run: pnpm -C e2e-v4 build
+        env:
+          WORKFLOW_TARGET_WORLD: '@platformatic/world'
+          PLT_WORLD_SERVICE_URL: http://localhost:3042
+          PLT_WORLD_APP_ID: default
+          PLT_WORLD_DEPLOYMENT_VERSION: e2e-test
+
+      - name: Run e2e tests (v5 SDK)
+        run: pnpm test:e2e:v5
+        timeout-minutes: 5
+        env:
+          DATABASE_URL: postgresql://wf:wf@localhost:5434/workflow
+
+      - name: Run e2e tests (v4 SDK)
+        run: pnpm test:e2e:v4
         timeout-minutes: 5
         env:
           DATABASE_URL: postgresql://wf:wf@localhost:5434/workflow
 
       - name: Run Vercel e2e compatibility tests
-        run: pnpm test:vercel
+        run: pnpm test:e2e:vercel
         timeout-minutes: 10
         env:
           DATABASE_URL: postgresql://wf:wf@localhost:5434/workflow

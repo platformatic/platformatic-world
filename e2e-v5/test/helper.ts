@@ -8,8 +8,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 const WORKFLOW_ROOT = join(ROOT, '..', 'packages', 'workflow')
 
-export const WF_PORT = 23_042
-export const NEXT_PORT = 23_456
+// Random ports per run avoid races with the kernel's TIME_WAIT on a fixed
+// port across back-to-back test invocations (EADDRINUSE on :::PORT).
+function pickPort (): number {
+  return 30_000 + Math.floor(Math.random() * 20_000)
+}
+export const WF_PORT = pickPort()
+export const NEXT_PORT = pickPort()
 export const WF_URL = `http://localhost:${WF_PORT}`
 export const NEXT_URL = `http://localhost:${NEXT_PORT}`
 export const DEPLOYMENT_VERSION = 'e2e-test'
@@ -36,9 +41,7 @@ export function startProcess (cmd: string, args: string[], env: Record<string, s
     kill () {
       try {
         process.kill(-proc.pid!, 'SIGKILL')
-      } catch {
-        // Process already dead
-      }
+      } catch {}
     },
   }
 }
@@ -49,9 +52,7 @@ export async function waitForReady (url: string, timeoutMs = 60_000): Promise<vo
     try {
       const res = await fetch(url)
       if (res.ok) return
-    } catch {
-      // not ready yet
-    }
+    } catch {}
     await sleep(500)
   }
   throw new Error(`Timed out waiting for ${url}`)
@@ -92,7 +93,6 @@ export async function waitForHookByToken (token: string, timeoutMs = 15_000): Pr
   throw new Error(`Timed out waiting for hook with token ${token}`)
 }
 
-// Lazy-loaded SDK function (require world to be configured first)
 let sdkResumeHook: ((tokenOrHook: any, payload: any) => Promise<any>) | undefined
 
 export async function loadSdkHookFunctions (): Promise<void> {
@@ -169,6 +169,27 @@ export function killPort (port: number) {
   } catch {}
 }
 
+// `killPort` sends SIGKILL but the OS holds the socket briefly. Block until
+// a fresh bind would succeed so the next spawn doesn't race into EADDRINUSE.
+// Next.js binds on `::` (dual-stack) and wattpm on `0.0.0.0`; we probe both
+// sequentially because concurrent binds on the same port on IPv4 + IPv6
+// self-collide on Linux where `::` is dual-stack by default.
+export async function waitForPortFree (port: number, timeoutMs = 10_000): Promise<void> {
+  const net = await import('node:net')
+  const probe = (host: string) => new Promise<boolean>((resolve) => {
+    const srv = net.createServer()
+    srv.once('error', () => resolve(false))
+    srv.once('listening', () => srv.close(() => resolve(true)))
+    srv.listen(port, host)
+  })
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (await probe('0.0.0.0') && await probe('::')) return
+    await sleep(200)
+  }
+  throw new Error(`Port ${port} still in use after ${timeoutMs}ms`)
+}
+
 export async function triggerPagesWorkflow (workflowFn: string, args: any[] = []): Promise<string> {
   const url = new URL('/api/trigger-pages', NEXT_URL)
   url.searchParams.set('workflowFn', workflowFn)
@@ -183,27 +204,26 @@ export async function triggerPagesWorkflow (workflowFn: string, args: any[] = []
 }
 
 export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: SpawnedProcess }> {
-  // Kill any leftover processes on our ports
   killPort(WF_PORT)
   killPort(NEXT_PORT)
-  await sleep(500)
+  await waitForPortFree(WF_PORT)
+  await waitForPortFree(NEXT_PORT)
 
-  // 1. Start the workflow service in single-tenant mode via Watt
-  const wfService = startProcess('npx', ['wattpm', 'start'], {
+  // watt-test.json disables runtime.metrics — otherwise wattpm tries to
+  // bind 9090 and FATALs when another process on the dev machine holds it.
+  const wfService = startProcess('npx', ['wattpm', 'start', '-c', 'watt-test.json'], {
     DATABASE_URL: DB_URL,
     PORT: String(WF_PORT),
   }, WORKFLOW_ROOT)
 
   await waitForReady(`${WF_URL}/api/v1/apps/default/runs`)
 
-  // 2. Clean up stale data from any previous test runs
   const { default: pg } = await import('pg')
   const client = new pg.Client(DB_URL)
   await client.connect()
   await client.query('TRUNCATE workflow_events, workflow_hooks, workflow_queue_messages, workflow_steps, workflow_waits, workflow_stream_chunks, workflow_runs, workflow_queue_handlers CASCADE')
   await client.end()
 
-  // 3. Start the Next.js app (already built)
   const nextApp = startProcess('npx', ['next', 'start', '-p', String(NEXT_PORT)], {
     WORKFLOW_TARGET_WORLD: '@platformatic/world',
     PLT_WORLD_SERVICE_URL: WF_URL,
@@ -213,10 +233,8 @@ export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: Sp
 
   await waitForReady(NEXT_URL)
 
-  // 4. Register queue handlers
   await registerHandlers()
 
-  // 5. Configure the world for SDK functions in the test process
   process.env.WORKFLOW_TARGET_WORLD = '@platformatic/world'
   process.env.PLT_WORLD_SERVICE_URL = WF_URL
   process.env.PLT_WORLD_APP_ID = 'default'
@@ -229,4 +247,11 @@ export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: Sp
 export async function teardown (wfService: SpawnedProcess, nextApp: SpawnedProcess) {
   nextApp?.kill()
   wfService?.kill()
+  // Wait for the kernel to release the ports so the next test run starts
+  // clean. Without this, back-to-back `npm run test:e2e` invocations race
+  // into EADDRINUSE before TIME_WAIT expires.
+  try {
+    await waitForPortFree(WF_PORT, 5000)
+    await waitForPortFree(NEXT_PORT, 5000)
+  } catch {}
 }

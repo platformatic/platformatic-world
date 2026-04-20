@@ -214,15 +214,60 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'run_started': {
-          await client.query(
-            `UPDATE workflow_runs SET status = 'running', started_at = NOW(), updated_at = NOW()
-             WHERE id = $1 AND application_id = $2`,
+          // SDK v5 contract: events.create('run_started') must be idempotent,
+          // AND must bootstrap the run from the event payload when the prior
+          // run_created failed (resilient start). The SDK puts the original
+          // start() args into eventData — input, deploymentId, workflowName,
+          // executionContext — specifically so the run can be reconstructed
+          // here.
+
+          const existingRun = await client.query(
+            'SELECT id FROM workflow_runs WHERE id = $1 AND application_id = $2',
             [rawRunId, appId]
           )
-          const eventRow = await insertEvent(client, rawRunId, appId, body)
+
+          if (existingRun.rows.length === 0) {
+            // Resilient start: create the run from the run_started eventData.
+            const eventData = body.eventData || {}
+            if (!eventData.workflowName || !eventData.deploymentId) {
+              // No bootstrap data — can't recover.
+              throw new RunNotFound(rawRunId)
+            }
+            const input = eventData.input ? encodeData(eventData.input) : null
+            await client.query(
+              `INSERT INTO workflow_runs
+                 (id, application_id, workflow_name, deployment_id, status,
+                  input, execution_context, spec_version, started_at)
+               VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, NOW())`,
+              [rawRunId, appId, eventData.workflowName, eventData.deploymentId,
+                input, eventData.executionContext || null, body.specVersion || null]
+            )
+          }
+
+          // Dedupe run_started: exactly one event per run in the log, otherwise
+          // the v5 runtime fails replay with "Unconsumed event in event log".
+          const existingEvent = await client.query(
+            `SELECT id FROM workflow_events
+             WHERE run_id = $1 AND application_id = $2 AND event_type = 'run_started'
+             LIMIT 1`,
+            [rawRunId, appId]
+          )
+
+          let eventRow: any = null
+          if (existingEvent.rows.length === 0) {
+            if (existingRun.rows.length > 0) {
+              await client.query(
+                `UPDATE workflow_runs SET status = 'running', started_at = NOW(), updated_at = NOW()
+                 WHERE id = $1 AND application_id = $2`,
+                [rawRunId, appId]
+              )
+            }
+            eventRow = await insertEvent(client, rawRunId, appId, body)
+          }
+
           const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
           if (!runRow) throw new RunNotFound(rawRunId)
-          result = { event: formatEvent(eventRow, resolveData), run: formatRun(runRow, resolveData) }
+          result = { event: eventRow ? formatEvent(eventRow, resolveData) : null, run: formatRun(runRow, resolveData) }
           break
         }
 

@@ -32,7 +32,10 @@ Two packages:
 - **`@platformatic/workflow`** (`packages/workflow/`) -- Fastify REST API that owns storage, queue routing, and deployment lifecycle. Multi-tenant with per-app isolation.
 - **`@platformatic/world`** (`packages/world/`) -- Thin HTTP client implementing the `@workflow/world` `World` interface. Drop-in replacement for other world implementations.
 
-The `e2e/` directory contains a Next.js test app and end-to-end test suites (57 Vercel-compatible tests + our own integration tests).
+Two e2e workbenches:
+
+- **`e2e-v5/`** — Next.js test app pinned to `workflow@5.0.0-beta.2` SDK. Runs our Vercel-compat suite (`vercel-e2e.test.ts`, 61 ports of upstream tests) and CBOR-specific assertions. Mirrors Vercel's main-branch CI.
+- **`e2e-v4/`** — Same app, pinned to `workflow@4.2.4` stable SDK. Proves `@platformatic/world` still works for users on the stable SDK line.
 
 ## Prerequisites
 

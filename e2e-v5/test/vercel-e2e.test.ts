@@ -364,8 +364,7 @@ test('hookDisposeTest: hook token reuse after explicit disposal while running', 
 
 // ---- Webhooks ----
 
-// TODO: flaky on CI — respondWith: 'manual' relies on TransformStream timing sensitive to runner speed
-test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { skip: true, timeout: 120_000 }, async () => {
+test('webhookWorkflow: HTTP-triggered resume with 3 webhook types', { timeout: 120_000 }, async () => {
   const runId = await triggerE2eWorkflow('webhookWorkflow')
 
   // Poll until all 3 hooks are created instead of a fixed sleep
@@ -548,9 +547,129 @@ test('stepFunctionAsStartArgWorkflow: step fn ref passed as start() argument', {
 
 // ---- Health checks ----
 
+// ---- Resilient start (adapted from Vercel e2e.test.ts:2255) ----
+
+test('resilient start: addTenWorkflow completes when run_created returns 500', { timeout: 60_000 }, async () => {
+  // Stubs the first events.create call (run_created) to throw 500. The
+  // queue is dispatched with runInput embedded, and the server must
+  // bootstrap the run from the run_started fallback path using that
+  // payload. Verifies the full spec-v3 resilient-start contract.
+  const { getWorld } = await import('workflow/runtime')
+  const { start } = await import('workflow/api')
+
+  const realWorld = await getWorld()
+  let createCallCount = 0
+  const stubbedWorld: any = {
+    ...realWorld,
+    events: {
+      ...realWorld.events,
+      create: async (...args: any[]) => {
+        createCallCount++
+        if (createCallCount === 1) {
+          const err: any = new Error('Simulated storage outage')
+          err.name = 'WorkflowWorldError'
+          err.status = 500
+          throw err
+        }
+        return (realWorld.events.create as any)(...args)
+      },
+    },
+  }
+
+  const manifestRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/manifest.json`)
+  const manifest = await manifestRes.json() as { workflows: Record<string, Record<string, { workflowId: string }>> }
+  const wfFile = Object.keys(manifest.workflows).find((f) => f.includes('e2e.ts'))!
+  const wfMeta = manifest.workflows[wfFile].addTenWorkflow
+
+  const run = await start(wfMeta, [123], { world: stubbedWorld })
+  assert.equal(createCallCount, 1, 'stub must have intercepted exactly the run_created call')
+
+  const returnValue = await run.returnValue
+  assert.equal(returnValue, 133, 'resilient start path must reconstruct the run from queue payload')
+})
+
+// ---- outputStreamWorkflow: getTailIndex and getChunks (adapted from Vercel e2e.test.ts:709) ----
+
+test('outputStreamWorkflow: getTailIndex returns correct index after stream completes', { timeout: 60_000 }, async () => {
+  const { start } = await import('workflow/api')
+  const manifestRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/manifest.json`)
+  const manifest = await manifestRes.json() as { workflows: Record<string, Record<string, { workflowId: string }>> }
+  const wfFile = Object.keys(manifest.workflows).find((f) => f.includes('e2e.ts'))!
+  const wfMeta = manifest.workflows[wfFile].outputStreamWorkflow
+
+  const run = await start(wfMeta, [])
+  await run.returnValue
+
+  const readable = run.getReadable()
+  const tailIndex = await readable.getTailIndex()
+  // outputStreamWorkflow writes 2 chunks to the default stream (1 binary + 1 object);
+  // the other 2 chunks go to the named "test" stream. Index is 0-based.
+  assert.equal(tailIndex, 1, `expected tailIndex=1, got ${tailIndex}`)
+})
+
+test('outputStreamWorkflow: getTailIndex returns -1 before any chunks are written', { timeout: 60_000 }, async () => {
+  const { start } = await import('workflow/api')
+  const manifestRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/manifest.json`)
+  const manifest = await manifestRes.json() as { workflows: Record<string, Record<string, { workflowId: string }>> }
+  const wfFile = Object.keys(manifest.workflows).find((f) => f.includes('e2e.ts'))!
+  const wfMeta = manifest.workflows[wfFile].outputStreamWorkflow
+
+  const run = await start(wfMeta, [])
+
+  // Probe a nonexistent namespace — the stream has no data, getTailIndex must return -1.
+  const readable = run.getReadable({ namespace: 'nonexistent' })
+  const tailIndex = await readable.getTailIndex()
+  assert.equal(tailIndex, -1)
+})
+
+test('outputStreamWorkflow: getChunks returns same content as reading the stream', { timeout: 60_000 }, async () => {
+  const { start } = await import('workflow/api')
+  const { getWorld } = await import('workflow/runtime')
+
+  const manifestRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/manifest.json`)
+  const manifest = await manifestRes.json() as { workflows: Record<string, Record<string, { workflowId: string }>> }
+  const wfFile = Object.keys(manifest.workflows).find((f) => f.includes('e2e.ts'))!
+  const wfMeta = manifest.workflows[wfFile].outputStreamWorkflow
+
+  const run = await start(wfMeta, [])
+  await run.returnValue
+
+  const reader = run.getReadable().getReader()
+  const streamChunks: unknown[] = []
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    streamChunks.push(value)
+  }
+
+  const world = await getWorld()
+  const streamName = `${run.runId.replace('wrun_', 'strm_')}_user`
+  const paginatedChunks: Uint8Array[] = []
+  let cursor: string | null = null
+  let iterations = 0
+  do {
+    const page = await world.streams.getChunks(run.runId, streamName, {
+      limit: 1, // small page to exercise pagination
+      ...(cursor ? { cursor } : {}),
+    })
+    for (const chunk of page.data) {
+      paginatedChunks.push(chunk.data)
+    }
+    cursor = page.cursor
+    if (!page.hasMore) {
+      assert.equal(page.done, true, 'stream should be marked done when no more pages')
+    }
+    if (++iterations > 50) throw new Error('pagination runaway')
+  } while (cursor)
+
+  assert.equal(paginatedChunks.length, streamChunks.length, `chunk counts differ: paginated=${paginatedChunks.length}, streamed=${streamChunks.length}`)
+})
+
 test('health check (queue-based): workflow and step endpoints respond', { timeout: 60_000 }, async () => {
   const { healthCheck, getWorld } = await import('workflow/runtime')
-  const world = getWorld()
+  // getWorld is async in @workflow/core@5 — awaiting a Promise was passing
+  // a Promise as `world` and throwing "world.queue is not a function".
+  const world = await getWorld()
 
   const workflowResult = await healthCheck(world, 'workflow', { timeout: 30000 })
   assert.equal(workflowResult.healthy, true)
@@ -578,21 +697,14 @@ test('health check endpoint (HTTP): flow and step endpoints respond', { timeout:
 // ---- .well-known/agent discovery ----
 
 test('wellKnownAgentWorkflow: step discovery in dot-prefixed directory', { timeout: 60_000 }, async () => {
-  // Fetch manifest to get the workflowId for wellKnownAgentWorkflow
   const manifestRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/manifest.json`)
-  if (!manifestRes.ok) {
-    return // Manifest not available — skip gracefully
-  }
+  assert.equal(manifestRes.status, 200)
   const manifest = await manifestRes.json() as {
     workflows: Record<string, Record<string, { workflowId: string }>>
   }
-
-  // Find the workflow in .well-known/agent/v1/steps
-  const workflowFile = Object.keys(manifest.workflows).find((f: string) =>
-    f.includes('.well-known/agent')
-  )
-  assert.ok(workflowFile, 'Could not find .well-known/agent workflow file in manifest')
-  const wfMeta = manifest.workflows[workflowFile]?.wellKnownAgentWorkflow
+  const workflowFile = Object.keys(manifest.workflows).find((f: string) => f.includes('.well-known/agent'))
+  assert.ok(workflowFile, `Could not find .well-known/agent workflow file in manifest. Keys: ${Object.keys(manifest.workflows).join(', ')}`)
+  const wfMeta = manifest.workflows[workflowFile].wellKnownAgentWorkflow
   assert.ok(wfMeta, 'Could not find wellKnownAgentWorkflow in manifest')
 
   const { start: startWorkflow } = await import('workflow/api')

@@ -79,6 +79,30 @@ const world = createPlatformaticWorld({
 })
 ```
 
+## Spec version support
+
+`@platformatic/world` declares `specVersion: SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT` (3). In practice:
+
+- Runs created by `start()` are tagged with spec v3.
+- Queue messages between client and server use CBOR framing. CBOR preserves `Uint8Array` natively (JSON does not), so binary workflow input survives the queue round-trip without base64 wrapping.
+- `createQueueHandler` accepts both CBOR and JSON inbound via a dual transport. A v3 client can be deployed against a v2-only server during rollout; a v2 client can be deployed against a v3 server.
+
+Peer dependency: `@workflow/world` ≥ 4.1.1 (the first stable release exporting `SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT`).
+
+## Workflow SDK compatibility
+
+Our World API is typed against **`@workflow/world@4.1.1` stable**, but the same world instance also works at runtime against `@workflow/core@5.0.0-beta` (the unreleased v5 line).
+
+| Installed `workflow` SDK | Works at runtime | Notes |
+|---|---|---|
+| `workflow@4.2.x` (stable) | ✅ | The declared API. Streamer calls route through the flat methods (`writeToStream`, `getStreamChunks`, ...). |
+| `workflow@5.0.0-beta.x` | ✅ | The v5 SDK calls `world.streams.*` (nested namespace, different argument order). We expose these at runtime alongside the v4 methods. |
+| `workflow@4.1.x` (pre-CBOR) | ⚠️ | Works, but without CBOR transport. Runs stay on spec v2 (JSON queue). |
+
+We verify both SDK versions in CI (`e2e/` runs against v5 beta to mirror Vercel's community-world suite; `e2e-v4/` runs against v4.2.4 stable to guard the primary user-facing path).
+
+The v5 breaking changes (PR [#1293](https://github.com/vercel/workflow/pull/1293), streamer namespace rename + `runId`-first argument order, required `runId` on `steps.get`) are additive from our side — we keep the v4 flat methods as the canonical interface and expose the v5 `streams.*` namespace as a runtime addition.
+
 ## License
 
 Apache-2.0

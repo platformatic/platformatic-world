@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Agent } from 'undici'
 import type { World } from '@workflow/world'
+import { SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT } from '@workflow/world'
 import { HttpClient } from './lib/client.ts'
 import type { ClientConfig } from './lib/client.ts'
 import { createStorage } from './lib/storage.ts'
@@ -16,6 +17,7 @@ export function createPlatformaticWorld (config: PlatformaticWorldConfig): World
   const client = new HttpClient(config)
 
   return {
+    specVersion: SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT,
     ...createStorage(client),
     ...createQueue(client, config),
     ...createStreamer(client),

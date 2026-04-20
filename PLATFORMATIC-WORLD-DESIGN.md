@@ -309,6 +309,7 @@ GET    /api/v1/apps/:appId/runs/:runId/streams
 
 ```
 POST   /api/v1/apps/:appId/queue
+  Content-Type: application/json  OR  application/cbor
   Body: { queueName, message, deploymentId, idempotencyKey, delaySeconds }
   → Enqueues a message (immediate or deferred delivery)
 ```
@@ -328,6 +329,27 @@ Messages are inserted as `pending` and dispatched asynchronously by the poller, 
 **Error responses:**
 - `409` — Duplicate message (idempotency key already processed)
 - `429` — Queue rate limit exceeded
+
+#### Transport format
+
+The enqueue body is a single envelope, encoded either as JSON or as CBOR (`application/cbor`). The client picks the encoding per-message using the target run's `specVersion`:
+
+- `specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT` (3) → CBOR
+- otherwise → JSON
+
+Because `@platformatic/world` declares `specVersion = 3`, all runs we create end up on the CBOR path. The server stores the message in its arrival encoding (`payload` JSONB or `payload_bytes` BYTEA + `payload_encoding = 'cbor'`) and the dispatcher forwards it with a matching `Content-Type`, so a run's transport stays consistent through retries and re-enqueues.
+
+```mermaid
+flowchart LR
+  Client -->|v3: cbor.encode(env)| Q[POST /queue]
+  Client -.->|v2: JSON.stringify(env)| Q
+  Q --> DB[(workflow_queue_messages<br/>payload OR payload_bytes)]
+  DB --> D[Dispatcher]
+  D -->|encoding=cbor| H1[Handler]
+  D -.->|encoding=json| H1
+```
+
+CBOR mirrors `@workflow/world-vercel`'s transport byte-for-byte — the motivation is to preserve `Uint8Array` values (workflow input on spec v3) without base64 wrapping, and to keep Platformatic's wire format spec-comparable with Vercel's.
 
 ### 6.10 Encryption
 

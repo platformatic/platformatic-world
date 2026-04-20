@@ -62,10 +62,18 @@ All app-scoped endpoints are prefixed with `/api/v1/apps/:appId`.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/queue` | Enqueue a message |
+| `POST` | `/queue` | Enqueue a message (accepts `application/json` or `application/cbor`) |
 | `POST` | `/handlers` | Register queue handler endpoints |
 | `PUT` | `/runs/:runId/streams/:name` | Write stream chunks |
 | `GET` | `/runs/:runId/streams` | List stream names |
+| `GET` | `/runs/:runId/streams/:name/chunks` | Paginated stream chunks (`?limit`, `?cursor`) |
+| `GET` | `/runs/:runId/streams/:name/info` | Stream metadata (`tailIndex`, `done`) |
+
+#### Queue payload encoding
+
+Messages are stored in the encoding they arrive in. JSON bodies land in the `payload` JSONB column; CBOR bodies land in `payload_bytes` (BYTEA) with `payload_encoding = 'cbor'`. The dispatcher forwards to handler URLs with a matching `Content-Type`, so a run's transport format stays consistent end-to-end across retries and re-enqueues.
+
+Migration `002.do.sql` adds `payload_bytes` + `payload_encoding` columns and an XOR constraint (exactly one of `payload` / `payload_bytes` per row). The undo migration refuses to run while any `payload_encoding = 'cbor'` rows exist — drain the queue before downgrading.
 
 ### Admin (requires admin service account)
 

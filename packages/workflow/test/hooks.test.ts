@@ -1,5 +1,6 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import { setupTest, teardownTest } from './helper.ts'
 import type { TestContext } from './helper.ts'
 
@@ -24,7 +25,10 @@ describe('hooks', () => {
     })
     runId = JSON.parse(createRes.body).run.runId
 
-    hookToken = `hook-token-${Date.now()}`
+    // Must be unique across runs — workflow_hooks has a partial unique index
+    // on token WHERE status = 'pending', and app-scoped teardown won't clear
+    // pending hooks from prior crashed runs.
+    hookToken = `hook-token-${randomBytes(8).toString('hex')}`
 
     // Create hook
     await ctx.app.inject({

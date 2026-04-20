@@ -83,8 +83,20 @@ export function createStorage (client: HttpClient) {
   return {
     runs: {
       get: (async (id: string, params?: any) => {
-        const result = await client.get(`/runs/${id}`, buildQuery(params))
-        return restoreEntity(result)
+        try {
+          const result = await client.get(`/runs/${id}`, buildQuery(params))
+          return restoreEntity(result)
+        } catch (err: any) {
+          // SDK's resilient-start retry loop uses WorkflowRunNotFoundError.is()
+          // (which checks error.name === 'WorkflowRunNotFoundError') to decide
+          // whether 404 is retryable. Without this name the loop breaks
+          // immediately and the bootstrap-from-queue path never runs.
+          if (err?.statusCode === 404) {
+            err.name = 'WorkflowRunNotFoundError'
+            err.runId = id
+          }
+          throw err
+        }
       }) as any,
 
       list: (async (params?: any) => {
@@ -121,6 +133,11 @@ export function createStorage (client: HttpClient) {
         if (result?.hook) restoreEntity(result.hook)
         if (result?.wait) restoreEntity(result.wait)
         return result
+      },
+
+      get: async (runId: string, eventId: string, params?: any) => {
+        const result = await client.get(`/runs/${runId}/events/${eventId}`, buildQuery(params))
+        return restoreEntity(result)
       },
 
       list: async (params: any) => {
