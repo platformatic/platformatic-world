@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { Pool } from 'undici'
+import { encode } from 'cbor-x'
 
 const K8S_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 
@@ -8,6 +9,9 @@ export interface ClientConfig {
   serviceUrl: string
   appId: string
 }
+
+export type QueryParams = Record<string, string | undefined>
+export type Encoding = 'json' | 'cbor'
 
 function createAPIError (statusCode: number, text: string): Error {
   let meta: any
@@ -28,16 +32,33 @@ function createAPIError (statusCode: number, text: string): Error {
   return err
 }
 
+function assertPath (path: string): void {
+  if (!path.startsWith('/')) {
+    throw new Error(`client path must start with '/': ${JSON.stringify(path)}`)
+  }
+  if (path.includes('//')) {
+    throw new Error(`client path contains '//': ${JSON.stringify(path)}`)
+  }
+}
+
+function buildQuery (query?: QueryParams): string {
+  if (!query) return ''
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(query)) {
+    if (v !== undefined) params.set(k, v)
+  }
+  const s = params.toString()
+  return s ? `?${s}` : ''
+}
+
 export class HttpClient {
   #pool: Pool
   #baseUrl: string
-  #appId: string
   #token: string | null
 
   constructor (config: ClientConfig) {
     this.#pool = new Pool(config.serviceUrl)
     this.#baseUrl = `/api/v1/apps/${config.appId}`
-    this.#appId = config.appId
     this.#token = null
     try {
       this.#token = readFileSync(K8S_TOKEN_PATH, 'utf8').trim()
@@ -53,55 +74,23 @@ export class HttpClient {
     return {}
   }
 
-  async post (path: string, body: unknown, query?: Record<string, string | undefined>): Promise<any> {
-    let fullPath = `${this.#baseUrl}${path}`
-    if (query) {
-      const url = new URL(`http://localhost${fullPath}`)
-      for (const [k, v] of Object.entries(query)) {
-        if (v !== undefined) url.searchParams.set(k, v)
-      }
-      fullPath = `${url.pathname}${url.search}`
-    }
-
-    const headers: Record<string, string> = { 'content-type': 'application/json', ...this.#authHeaders() }
-
-    const response = await this.#pool.request({
-      method: 'POST',
-      path: fullPath,
-      headers,
-      body: JSON.stringify(body),
-    })
-
-    if (response.statusCode >= 400) {
-      const text = await response.body.text()
-      throw createAPIError(response.statusCode, text)
-    }
-
-    if (response.statusCode === 204) {
-      await response.body.dump()
-      return undefined
-    }
-
-    return response.body.json()
+  #path (path: string, query?: QueryParams): string {
+    assertPath(path)
+    return `${this.#baseUrl}${path}${buildQuery(query)}`
   }
 
-  async postRaw (path: string, body: Buffer, contentType: string, query?: Record<string, string | undefined>): Promise<any> {
-    let fullPath = `${this.#baseUrl}${path}`
-    if (query) {
-      const url = new URL(`http://localhost${fullPath}`)
-      for (const [k, v] of Object.entries(query)) {
-        if (v !== undefined) url.searchParams.set(k, v)
-      }
-      fullPath = `${url.pathname}${url.search}`
-    }
+  async post (path: string, body: unknown, query?: QueryParams, encoding: Encoding = 'json'): Promise<any> {
+    const isCbor = encoding === 'cbor'
+    const contentType = isCbor ? 'application/cbor' : 'application/json'
+    const serialized = isCbor ? Buffer.from(encode(body)) : JSON.stringify(body)
 
     const headers: Record<string, string> = { 'content-type': contentType, ...this.#authHeaders() }
 
     const response = await this.#pool.request({
       method: 'POST',
-      path: fullPath,
+      path: this.#path(path, query),
       headers,
-      body,
+      body: serialized,
     })
 
     if (response.statusCode >= 400) {
@@ -117,17 +106,10 @@ export class HttpClient {
     return response.body.json()
   }
 
-  async get (path: string, query?: Record<string, string | undefined>): Promise<any> {
-    const url = new URL(`http://localhost${this.#baseUrl}${path}`)
-    if (query) {
-      for (const [k, v] of Object.entries(query)) {
-        if (v !== undefined) url.searchParams.set(k, v)
-      }
-    }
-
+  async get (path: string, query?: QueryParams): Promise<any> {
     const response = await this.#pool.request({
       method: 'GET',
-      path: `${url.pathname}${url.search}`,
+      path: this.#path(path, query),
       headers: this.#authHeaders(),
     })
 
@@ -144,7 +126,7 @@ export class HttpClient {
 
     const response = await this.#pool.request({
       method: 'PUT',
-      path: `${this.#baseUrl}${path}`,
+      path: this.#path(path),
       headers: putHeaders,
       body: JSON.stringify(body),
     })
@@ -162,17 +144,10 @@ export class HttpClient {
     return response.body.json()
   }
 
-  async getRaw (path: string, query?: Record<string, string | undefined>): Promise<Buffer> {
-    const url = new URL(`http://localhost${this.#baseUrl}${path}`)
-    if (query) {
-      for (const [k, v] of Object.entries(query)) {
-        if (v !== undefined) url.searchParams.set(k, v)
-      }
-    }
-
+  async getRaw (path: string, query?: QueryParams): Promise<Buffer> {
     const response = await this.#pool.request({
       method: 'GET',
-      path: `${url.pathname}${url.search}`,
+      path: this.#path(path, query),
       headers: this.#authHeaders(),
     })
 
@@ -188,17 +163,10 @@ export class HttpClient {
     return Buffer.concat(chunks)
   }
 
-  async getStream (path: string, query?: Record<string, string | undefined>): Promise<Readable> {
-    const url = new URL(`http://localhost${this.#baseUrl}${path}`)
-    if (query) {
-      for (const [k, v] of Object.entries(query)) {
-        if (v !== undefined) url.searchParams.set(k, v)
-      }
-    }
-
+  async getStream (path: string, query?: QueryParams): Promise<Readable> {
     const response = await this.#pool.request({
       method: 'GET',
-      path: `${url.pathname}${url.search}`,
+      path: this.#path(path, query),
       headers: this.#authHeaders(),
     })
 

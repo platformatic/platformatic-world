@@ -21,11 +21,6 @@ The following files contain code adapted from the Vercel Workflow SDK e2e test s
                                          packages/core/e2e/e2e.test.ts)
   e2e-v5/test/helper.ts                   — shared test infrastructure
 
-The following file contains code adapted from the @workflow/world-vercel package:
-
-  packages/world/src/lib/transport.ts  — {Json,Cbor,Dual}Transport classes,
-                                         ported from packages/world-vercel/src/queue.ts.
-                                         Same wire contract: application/cbor
-                                         content-type, CBOR-first deserialization
-                                         with JSON fallback. Spec parity with Vercel
-                                         on the queue path.
+The CBOR queue transport in packages/world/src/lib/{client,queue}.ts follows
+the wire contract from @workflow/world-vercel (packages/world-vercel/src/queue.ts):
+`application/cbor` content-type, CBOR-first deserialization with JSON fallback.

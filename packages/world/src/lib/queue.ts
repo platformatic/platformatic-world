@@ -1,7 +1,7 @@
 import type { HttpClient } from './client.ts'
 import type { MessageId, ValidQueueName, QueuePayload, QueueOptions } from '@workflow/world'
 import { SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT } from '@workflow/world'
-import { CborTransport, DualTransport, JsonTransport, drainStream, type Transport } from './transport.ts'
+import { decode } from 'cbor-x'
 
 export interface QueueConfig {
   deploymentVersion: string
@@ -15,9 +15,16 @@ interface EnqueueEnvelope {
   delaySeconds?: number
 }
 
-const cborTransport = new CborTransport()
-const jsonTransport = new JsonTransport()
-const dualTransport = new DualTransport()
+async function readRequestBody (req: Request): Promise<Buffer> {
+  const chunks: Uint8Array[] = []
+  const reader = (req.body as unknown as ReadableStream<Uint8Array>).getReader()
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (value) chunks.push(value)
+  }
+  return Buffer.concat(chunks)
+}
 
 export function createQueue (client: HttpClient, config: QueueConfig) {
   const queue = async (queueName: ValidQueueName, message: QueuePayload, opts?: QueueOptions): Promise<{ messageId: MessageId | null }> => {
@@ -33,13 +40,9 @@ export function createQueue (client: HttpClient, config: QueueConfig) {
     // specVersion = SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT, so every run
     // we handle is already on the CBOR path. Matches world-vercel's default.
     const useCbor = (opts?.specVersion ?? SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT) >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT
-    const transport: Transport = useCbor ? cborTransport : jsonTransport
 
     try {
-      const result = useCbor
-        ? await client.postRaw('/queue', transport.serialize(envelope), transport.contentType)
-        : await client.post('/queue', envelope)
-
+      const result = await client.post('/queue', envelope, undefined, useCbor ? 'cbor' : 'json')
       return { messageId: (result?.messageId ?? null) as MessageId | null }
     } catch (err: any) {
       // 409 = duplicate idempotency key, treat as success (message already processed)
@@ -56,8 +59,14 @@ export function createQueue (client: HttpClient, config: QueueConfig) {
       let body: { message: unknown; meta: { queueName: ValidQueueName; messageId: MessageId; attempt: number } }
 
       if (contentType.includes('application/cbor')) {
-        const bytes = await drainStream(req.body as unknown as ReadableStream<Uint8Array>)
-        body = dualTransport.deserialize(bytes) as typeof body
+        const bytes = await readRequestBody(req)
+        // CBOR-first with a JSON fallback lets a v2 client reach a v3 server
+        // during rollout without content negotiation.
+        try {
+          body = decode(bytes) as typeof body
+        } catch {
+          body = JSON.parse(bytes.toString('utf8')) as typeof body
+        }
       } else {
         body = await req.json() as typeof body
       }
