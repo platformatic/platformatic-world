@@ -23,7 +23,7 @@
     "dist"
   ],
   "dependencies": {
-    "cbor-x": "1.6.0",
+    "cbor-x": "1.6.4",
     "undici": "^7.8.0"
   },
   "devDependencies": {
