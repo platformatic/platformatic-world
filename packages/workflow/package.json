@@ -39,7 +39,7 @@
     "wattpm": "^3.40.0"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
+    "@types/node": "^24.0.0",
     "@types/pg": "^8.15.4",
     "typescript": "^5.9.3"
   },
