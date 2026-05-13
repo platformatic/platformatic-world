@@ -130,14 +130,46 @@ function formatWait (row: any) {
   }
 }
 
+// Non-repeatable correlated event types. Migration 003 enforces a partial
+// unique index on (run_id, event_type, correlation_id) for these so that
+// ON CONFLICT DO NOTHING handles duplicate inserts atomically — the
+// SELECT-then-INSERT pattern would race under concurrent dispatch retries.
+const DEDUPED_EVENT_TYPES = new Set([
+  'wait_created',
+  'wait_completed',
+  'hook_received',
+  'hook_disposed',
+])
+
 async function insertEvent (client: pg.PoolClient, runId: string, appId: number, body: any): Promise<any> {
   const correlationId = body.correlationId || null
   const eventData = body.eventData ? encodeData(body.eventData) : null
 
+  if (correlationId && DEDUPED_EVENT_TYPES.has(body.eventType)) {
+    const inserted = await client.query(
+      `INSERT INTO workflow_events (run_id, application_id, event_type, correlation_id, event_data, spec_version)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (run_id, event_type, correlation_id)
+         WHERE event_type IN ('wait_created', 'wait_completed', 'hook_received', 'hook_disposed')
+               AND correlation_id IS NOT NULL
+         DO NOTHING
+       RETURNING *`,
+      [runId, appId, body.eventType, correlationId, eventData, body.specVersion || null]
+    )
+    if (inserted.rows.length > 0) return inserted.rows[0]
+
+    const existing = await client.query(
+      `SELECT * FROM workflow_events
+       WHERE run_id = $1 AND application_id = $2 AND event_type = $3 AND correlation_id = $4
+       LIMIT 1`,
+      [runId, appId, body.eventType, correlationId]
+    )
+    return existing.rows[0]
+  }
+
   // Skip duplicate *_created events — the SDK may re-send them on retry or
-  // re-invocation. Duplicates in the event log cause "Unconsumed event" errors
-  // during replay. Only guard _created events because other event types
-  // (e.g. step_started) can legitimately repeat for step retries.
+  // re-invocation. Other event types (e.g. step_started) can legitimately
+  // repeat for step retries, so we only guard _created here.
   if (correlationId && body.eventType.endsWith('_created')) {
     const existing = await client.query(
       `SELECT id FROM workflow_events
