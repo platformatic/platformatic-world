@@ -7,7 +7,8 @@ async function handlersPlugin (app: FastifyInstance): Promise<void> {
   app.post('/api/v1/apps/:appId/handlers', async (request, reply) => {
     const appId = request.appId
     const body = request.body as {
-      podId: string
+      podId?: string
+      machineId?: string
       deploymentVersion: string
       endpoints: {
         workflow: string
@@ -16,8 +17,9 @@ async function handlersPlugin (app: FastifyInstance): Promise<void> {
       }
     }
 
-    if (!body.podId || !body.deploymentVersion || !body.endpoints) {
-      throw new BadRequest('podId, deploymentVersion, and endpoints are required')
+    const machineId = body.podId ?? body.machineId
+    if (!machineId || !body.deploymentVersion || !body.endpoints) {
+      throw new BadRequest('podId (or machineId), deploymentVersion, and endpoints are required')
     }
 
     await app.pg.query(
@@ -29,7 +31,7 @@ async function handlersPlugin (app: FastifyInstance): Promise<void> {
          step_url = $5,
          webhook_url = $6,
          last_heartbeat = NOW()`,
-      [appId, body.podId, body.deploymentVersion,
+      [appId, machineId, body.deploymentVersion,
         body.endpoints.workflow, body.endpoints.step, body.endpoints.webhook]
     )
 
