@@ -134,11 +134,11 @@ function formatWait (row: any) {
 // unique index on (run_id, event_type, correlation_id) for these so that
 // ON CONFLICT DO NOTHING handles duplicate inserts atomically — the
 // SELECT-then-INSERT pattern would race under concurrent dispatch retries.
+// hook_received intentionally NOT included: createHook async iterators
+// receive multiple payloads on the same correlation_id.
 const DEDUPED_EVENT_TYPES = new Set([
   'wait_created',
   'wait_completed',
-  'hook_received',
-  'hook_disposed',
 ])
 
 async function insertEvent (client: pg.PoolClient, runId: string, appId: number, body: any): Promise<any> {
@@ -150,7 +150,7 @@ async function insertEvent (client: pg.PoolClient, runId: string, appId: number,
       `INSERT INTO workflow_events (run_id, application_id, event_type, correlation_id, event_data, spec_version)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (run_id, event_type, correlation_id)
-         WHERE event_type IN ('wait_created', 'wait_completed', 'hook_received', 'hook_disposed')
+         WHERE event_type IN ('wait_created', 'wait_completed')
                AND correlation_id IS NOT NULL
          DO NOTHING
        RETURNING *`,

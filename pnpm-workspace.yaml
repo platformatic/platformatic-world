@@ -2,3 +2,5 @@ packages:
   - 'packages/*'
   - 'e2e-v5'
   - 'e2e-v4'
+
+minimumReleaseAge: 1440
