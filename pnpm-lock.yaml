@@ -122,8 +122,8 @@ importers:
         specifier: ^3.0.2
         version: 3.0.2
       undici:
-        specifier: ^7.22.0
-        version: 7.25.0
+        specifier: ^8.0.0
+        version: 8.2.0
       wattpm:
         specifier: ^3.40.0
         version: 3.54.0
@@ -144,8 +144,8 @@ importers:
         specifier: 1.6.4
         version: 1.6.4
       undici:
-        specifier: ^7.8.0
-        version: 7.25.0
+        specifier: ^8.0.0
+        version: 8.2.0
     devDependencies:
       '@types/node':
         specifier: ^22.15.0
@@ -4561,6 +4561,10 @@ packages:
   undici@7.25.0:
     resolution: {integrity: sha512-xXnp4kTyor2Zq+J1FfPI6Eq3ew5h6Vl0F/8d9XU5zZQf1tX9s2Su1/3PiMmUANFULpmksxkClamIZcaUqryHsQ==}
     engines: {node: '>=20.18.1'}
+
+  undici@8.2.0:
+    resolution: {integrity: sha512-Z+4Hx9GE26Lh9Upwfnc8C7SsrpBPGaM/Gm6kMFtiG7c+5IvQKlXi/t+9x9DrrCh29cww5TSP9YdVaBcnLDs5fQ==}
+    engines: {node: '>=22.19.0'}
 
   unicorn-magic@0.1.0:
     resolution: {integrity: sha512-lRfVq8fE8gz6QMBuDM6a+LO3IAzTi05H6gCVaUpir2E1Rwpo4ZUog45KpNXKC/Mn3Yb9UDuHumeFTo9iV/D9FQ==}
@@ -10209,6 +10213,8 @@ snapshots:
   undici@7.24.0: {}
 
   undici@7.25.0: {}
+
+  undici@8.2.0: {}
 
   unicorn-magic@0.1.0: {}
 
