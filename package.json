@@ -20,7 +20,7 @@
     ]
   },
   "devDependencies": {
-    "eslint": "^9.39.3",
+    "eslint": "^10.0.0",
     "neostandard": "^0.13.0"
   },
   "version": "0.7.1"
