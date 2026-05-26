@@ -32,6 +32,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Typecheck workflow-fastify
+        run: pnpm --filter '@platformatic/workflow-fastify' build
+
   test:
     runs-on: ubuntu-latest
 
