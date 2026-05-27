@@ -85,7 +85,7 @@ npx workflow build --target standalone
 | Option | Default | Description |
 |---|---|---|
 | `buildDir` | `process.cwd()` | Directory containing `.well-known/workflow/v1` |
-| `register` | `true` | Register the queue handler on boot (no-op under ICC) |
+| `register` | `true` | Register the queue handler on boot (no-op under [ICC](https://github.com/platformatic/intelligent-command-center), Platformatic's control plane) |
 
 ## Environment
 
