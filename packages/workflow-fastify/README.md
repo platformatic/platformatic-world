@@ -20,8 +20,8 @@ plugin only adds routes and a startup hook.
 2. This plugin imports those handlers and mounts them on Fastify, adapting
    Fastify `request`/`reply` to the Web `Request`/`Response` they expect.
 3. On boot it calls `@platformatic/world`'s `start()` to register the callback
-   endpoints with the engine. In Kubernetes/ICC this is a no-op (ICC registers
-   them).
+   endpoints with the engine. Under ICC ([Intelligent Command Center](https://github.com/platformatic/intelligent-command-center),
+   Platformatic's control plane) this is a no-op: ICC registers them for you.
 
 The build is the only step that needs the SDK's transform. At runtime this
 plugin needs no bundler.
