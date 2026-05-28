@@ -32,6 +32,14 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # The plugin imports @platformatic/world (workspace:*), whose types live in
+      # dist, so build it before typechecking the plugin.
+      - name: Build world package
+        run: pnpm -C packages/world build
+
+      - name: Typecheck workflow-fastify
+        run: pnpm --filter '@platformatic/workflow-fastify' build
+
   test:
     runs-on: ubuntu-latest
 
@@ -61,6 +69,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      # The workflow-fastify tests import @platformatic/world (workspace:*) at
+      # runtime from its dist, so build it before running the suite.
+      - name: Build world package
+        run: pnpm -C packages/world build
 
       - name: Run tests
         run: pnpm test

@@ -17,6 +17,10 @@ const ORPHAN_CHECK_INTERVAL = 60_000
 const SAFETY_POLL_INTERVAL = 5_000
 const LEADER_LOCK_ID = 42424242
 const DEFERRED_CHANNEL = 'deferred_messages'
+// Upper bound on dispatches in flight at once. Each dispatch is an independent
+// task (see processMessage), so a single slow/hung handler can no longer block
+// the poll loop; this cap just bounds concurrency and the in-flight set size.
+const MAX_INFLIGHT = 200
 
 export function createPoller (pool: pg.Pool, connectionString: string, log: any) {
   let stopped = false
@@ -26,6 +30,10 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   let listenClient: pg.Client | null = null
   let executing = false
   let pendingNotify = false
+  // Messages currently being dispatched in their own task. They stay 'pending'
+  // in the DB until their task resolves, so a crash re-dispatches them; this set
+  // just prevents the next poll from picking them up again while in flight.
+  const inFlight = new Set<number>()
 
   // Leader election only — dummy channel required by @platformatic/leader@0.1.0
   // TODO: remove channels once @platformatic/leader supports election-only mode
@@ -130,43 +138,29 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
          WHERE status = 'failed' AND next_retry_at <= NOW() AND attempts < 10`
       )
 
-      // 3. Dispatch all pending messages
-      const pending = await client.query(
-        `SELECT * FROM workflow_queue_messages
-         WHERE status = 'pending'
-         ORDER BY created_at ASC
-         FOR UPDATE SKIP LOCKED
-         LIMIT 100`
-      )
+      // 3. Claim pending messages (excluding those already in flight) and
+      // dispatch each in its own task. We do NOT await the dispatches here:
+      // a single slow or hung handler must not block the poll loop (the
+      // single-flight `executing` guard would otherwise freeze the whole queue
+      // for up to the dispatch bodyTimeout). Each task updates its own message.
+      const capacity = MAX_INFLIGHT - inFlight.size
+      if (capacity > 0) {
+        const inFlightIds = Array.from(inFlight)
+        const pending = await client.query(
+          `SELECT * FROM workflow_queue_messages
+           WHERE status = 'pending' AND NOT (id = ANY($1::bigint[]))
+           ORDER BY created_at ASC
+           FOR UPDATE SKIP LOCKED
+           LIMIT $2`,
+          [inFlightIds, capacity]
+        )
 
-      // Dispatch all messages concurrently (HTTP calls in parallel)
-      // then process results sequentially (DB updates on same client)
-      const dispatchResults = await Promise.all(
-        pending.rows.map(async (msg: any) => {
-          const route = await routeMessage(pool, msg.application_id, msg.deployment_version, msg.queue_name)
-          if (!route) {
-            return { msg, route: null, result: null }
-          }
-          const result = await dispatchMessage({
-            url: route.url,
-            queueName: msg.queue_name,
-            messageId: msg.id,
-            payload: msg.payload,
-            payloadBytes: msg.payload_bytes,
-            payloadEncoding: msg.payload_encoding,
-            attempt: msg.attempts,
-          })
-          log.info(`[POLLER] dispatched msgId=${msg.id} queue=${msg.queue_name} encoding=${msg.payload_encoding} status=${result.statusCode} timeoutSeconds=${result.timeoutSeconds} success=${result.success}`)
-          return { msg, route, result }
-        })
-      )
-
-      for (const { msg, route, result } of dispatchResults) {
-        if (!route || !result) {
-          await handleNoRoute(client, msg)
-          continue
+        for (const msg of pending.rows) {
+          if (inFlight.has(msg.id)) continue
+          inFlight.add(msg.id)
+          // Fire-and-forget: the task owns its message's result handling.
+          processMessage(msg)
         }
-        await handleDispatchResult(client, msg, result)
       }
 
       // 4. Schedule next wake-up based on earliest deferred/retry message
@@ -177,6 +171,44 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       log.error({ err }, 'Executor error')
     } finally {
       client.release()
+    }
+  }
+
+  // Dispatch a single message and persist its result on a dedicated client, so
+  // a slow handler ties up only its own task (and one connection, briefly, for
+  // the result write) rather than the shared poll loop. The message stays
+  // 'pending' until this resolves; on completion it is removed from `inFlight`
+  // so a failed dispatch is retried on the next poll.
+  async function processMessage (msg: any): Promise<void> {
+    try {
+      const route = await routeMessage(pool, msg.application_id, msg.deployment_version, msg.queue_name)
+      if (!route) {
+        const client = await pool.connect()
+        try { await handleNoRoute(client, msg) } finally { client.release() }
+        return
+      }
+
+      const result = await dispatchMessage({
+        url: route.url,
+        queueName: msg.queue_name,
+        messageId: msg.id,
+        payload: msg.payload,
+        payloadBytes: msg.payload_bytes,
+        payloadEncoding: msg.payload_encoding,
+        attempt: msg.attempts,
+      })
+      log.info(`[POLLER] dispatched msgId=${msg.id} queue=${msg.queue_name} encoding=${msg.payload_encoding} status=${result.statusCode} timeoutSeconds=${result.timeoutSeconds} success=${result.success}`)
+
+      const client = await pool.connect()
+      try { await handleDispatchResult(client, msg, result) } finally { client.release() }
+    } catch (err) {
+      // Leave the message 'pending'; removing it from inFlight (below) lets the
+      // next poll retry it.
+      log.error({ err, msgId: msg.id }, 'Dispatch task error')
+    } finally {
+      inFlight.delete(msg.id)
+      // A slot freed up — nudge the poller in case messages are waiting.
+      if (!stopped) execute()
     }
   }
 

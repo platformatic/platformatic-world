@@ -8,5 +8,7 @@ export default neostandard({
     'e2e-v4/app/.well-known/',
     'packages/world/dist/',
     'packages/workflow/dist/',
+    'packages/workflow-fastify/dist/',
+    'examples/*/.well-known/',
   ],
 })

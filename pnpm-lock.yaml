@@ -138,6 +138,25 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/workflow-fastify:
+    dependencies:
+      '@platformatic/world':
+        specifier: workspace:*
+        version: link:../world
+      fastify-plugin:
+        specifier: ^5.0.0
+        version: 5.1.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.19.19
+      fastify:
+        specifier: ^5.3.3
+        version: 5.8.5
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/world:
     dependencies:
       cbor-x:
@@ -2757,9 +2776,6 @@ packages:
   fast-uri@2.4.0:
     resolution: {integrity: sha512-ypuAmmMKInk5q7XcepxlnUWDLWv4GFtaJqAzWKqn62IpQ3pejtr5dTVbt3vwqVaMKmkNR55sTT+CqUKIaT21BA==}
 
-  fast-uri@3.1.0:
-    resolution: {integrity: sha512-iPeeDKJSWf4IEOasVVrknXpaBV0IApz/gp7S2bb7Z4Lljbl2MGJRqInZiUrQwV16cpzw/D3S5j5Julj/gT52AA==}
-
   fast-uri@3.1.2:
     resolution: {integrity: sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==}
 
@@ -5160,7 +5176,7 @@ snapshots:
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 3.1.0
+      fast-uri: 3.1.2
 
   '@fastify/autoload@6.3.1': {}
 
@@ -8257,7 +8273,7 @@ snapshots:
       '@fastify/merge-json-schemas': 0.2.1
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 3.1.0
+      fast-uri: 3.1.2
       json-schema-ref-resolver: 3.0.0
       rfdc: 1.4.1
 
@@ -8270,8 +8286,6 @@ snapshots:
   fast-safe-stringify@2.1.1: {}
 
   fast-uri@2.4.0: {}
-
-  fast-uri@3.1.0: {}
 
   fast-uri@3.1.2: {}
 
@@ -8307,7 +8321,7 @@ snapshots:
       process-warning: 5.0.0
       rfdc: 1.4.1
       secure-json-parse: 4.1.0
-      semver: 7.7.4
+      semver: 7.8.0
       toad-cache: 3.7.0
 
   fastparallel@2.4.1:
