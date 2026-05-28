@@ -148,8 +148,8 @@ importers:
         version: 5.1.0
     devDependencies:
       '@types/node':
-        specifier: ^22.15.0
-        version: 22.19.19
+        specifier: ^24.0.0
+        version: 24.12.4
       fastify:
         specifier: ^5.3.3
         version: 5.8.5
