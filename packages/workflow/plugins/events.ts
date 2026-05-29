@@ -9,13 +9,14 @@ import type pg from 'pg'
 function encodeData (data: unknown): Buffer | null {
   if (data === undefined || data === null) return null
   if (data instanceof Uint8Array || Buffer.isBuffer(data)) return Buffer.from(data)
-  // If it's a base64-encoded string representing binary, decode it
+  // A string field arrives base64-encoded only when the world client serialized
+  // a Uint8Array on the wire. Round-trip-check before treating it as binary;
+  // otherwise Buffer.from(str, 'base64') silently mangles plain text fields
+  // (e.g. v4 step errors sent as message strings).
   if (typeof data === 'string') {
-    try {
-      return Buffer.from(data, 'base64')
-    } catch {
-      return Buffer.from(JSON.stringify(data))
-    }
+    const buf = Buffer.from(data, 'base64')
+    if (buf.length > 0 && buf.toString('base64') === data) return buf
+    return Buffer.from(JSON.stringify(data))
   }
   return Buffer.from(JSON.stringify(data))
 }
@@ -65,7 +66,7 @@ function formatRun (row: any, resolveData?: string) {
     run.input = undefined
     run.output = undefined
   }
-  if (row.error) run.error = row.error
+  if (row.error) run.error = decodeData(row.error)
   if (row.execution_context) run.executionContext = row.execution_context
   if (row.started_at) run.startedAt = row.started_at
   if (row.completed_at) run.completedAt = row.completed_at
@@ -91,7 +92,7 @@ function formatStep (row: any, resolveData?: string) {
     step.input = undefined
     step.output = undefined
   }
-  if (row.error) step.error = row.error
+  if (row.error) step.error = decodeData(row.error)
   if (row.started_at) step.startedAt = row.started_at
   if (row.completed_at) step.completedAt = row.completed_at
   if (row.retry_after) step.retryAfter = row.retry_after
@@ -347,17 +348,11 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
             const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
             return { event: null, run: formatRun(runRow, resolveData) }
           }
-          const rawError = body.eventData?.error
-          const error = rawError
-            ? {
-                message: typeof rawError === 'string' ? rawError : (rawError.message || JSON.stringify(rawError)),
-                code: body.eventData.errorCode,
-              }
-            : null
+          const error = body.eventData?.error != null ? encodeData(body.eventData.error) : null
           await client.query(
             `UPDATE workflow_runs SET status = 'failed', error = $3, completed_at = NOW(), updated_at = NOW()
              WHERE id = $1 AND application_id = $2`,
-            [rawRunId, appId, error ? JSON.stringify(error) : null]
+            [rawRunId, appId, error]
           )
           await client.query(
             'UPDATE workflow_hooks SET status = \'disposed\', disposed_at = NOW() WHERE run_id = $1 AND application_id = $2 AND status != \'disposed\'',
@@ -444,9 +439,14 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'step_started': {
-          // Find step by correlation_id + run_id (LIMIT 1 to handle any legacy duplicates)
+          // FOR UPDATE serializes concurrent step_started requests for the
+          // same step. Without this, two SDK-retry POSTs both pass the
+          // status/started_at checks under READ COMMITTED, both INSERT a
+          // step_started event for the same attempt, and the SDK rejects
+          // the second on replay (CorruptedEventLogError: unconsumed
+          // step_started).
           const stepResult = await client.query(
-            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
             [rawRunId, body.correlationId, appId]
           )
 
@@ -459,6 +459,25 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
               const err: any = new Error(`Step ${body.correlationId} is in terminal state: ${step.status}`)
               err.statusCode = 409
               throw err
+            }
+
+            // Dedupe duplicate step_started for the same attempt. Once a
+            // step is running for attempt N, a second step_started for
+            // attempt N (concurrent SDK retry) is a no-op — return the
+            // existing state without re-inserting the event.
+            const bodyAttempt = body.eventData?.attempt
+            if (step.status === 'running' && (bodyAttempt == null || bodyAttempt === step.attempt)) {
+              const existingEvent = await client.query(
+                `SELECT * FROM workflow_events
+                 WHERE run_id = $1 AND application_id = $2 AND event_type = 'step_started' AND correlation_id = $3
+                 ORDER BY id DESC LIMIT 1`,
+                [rawRunId, appId, body.correlationId]
+              )
+              await client.query('COMMIT')
+              return {
+                event: existingEvent.rows.length > 0 ? formatEvent(existingEvent.rows[0], resolveData) : null,
+                step: formatStep(step, resolveData),
+              }
             }
 
             // Check if retry_after timestamp hasn't been reached yet
@@ -494,8 +513,14 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
 
         case 'step_completed': {
           const resultData = body.eventData?.result ? encodeData(body.eventData.result) : null
+          // FOR UPDATE serializes concurrent step_completed POSTs for the same
+          // step (e.g. SDK retry races on a slow/5xx response that nonetheless
+          // committed server-side). Without it, both transactions read
+          // status='running' under READ COMMITTED, both pass the dedup, and
+          // both INSERT a step_completed event — the SDK rejects the second
+          // as an unconsumed duplicate on replay (CorruptedEventLogError).
           const stepResult = await client.query(
-            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
             [rawRunId, body.correlationId, appId]
           )
           // Skip duplicate completions — the SDK may retry after a transient
@@ -521,11 +546,10 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'step_failed': {
-          const error = body.eventData
-            ? { message: String(body.eventData.error || ''), stack: body.eventData.stack }
-            : null
+          const error = body.eventData?.error != null ? encodeData(body.eventData.error) : null
+          // FOR UPDATE: see the comment on the step_completed case.
           const stepResult = await client.query(
-            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
             [rawRunId, body.correlationId, appId]
           )
           // Skip duplicate failures — same idempotency guard as step_completed.
@@ -538,7 +562,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
             await client.query(
               `UPDATE workflow_steps SET status = 'failed', error = $3, completed_at = NOW(), updated_at = NOW()
                WHERE id = $1 AND application_id = $2`,
-              [stepResult.rows[0].id, appId, error ? JSON.stringify(error) : null]
+              [stepResult.rows[0].id, appId, error]
             )
           }
           const eventRow = await insertEvent(client, rawRunId, appId, body)
@@ -550,9 +574,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'step_retrying': {
-          const error = body.eventData
-            ? { message: String(body.eventData.error || ''), stack: body.eventData.stack }
-            : null
+          const error = body.eventData?.error != null ? encodeData(body.eventData.error) : null
           const retryAfter = body.eventData?.retryAfter ? new Date(body.eventData.retryAfter) : null
           const stepResult = await client.query(
             'SELECT id FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
@@ -562,7 +584,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
             await client.query(
               `UPDATE workflow_steps SET status = 'pending', error = $3, retry_after = $4, updated_at = NOW()
                WHERE id = $1 AND application_id = $2`,
-              [stepResult.rows[0].id, appId, error ? JSON.stringify(error) : null, retryAfter]
+              [stepResult.rows[0].id, appId, error, retryAfter]
             )
           }
           const eventRow = await insertEvent(client, rawRunId, appId, body)

@@ -6,3 +6,5 @@ packages:
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@platformatic/leader'
+  - workflow
+  - '@workflow/*'
