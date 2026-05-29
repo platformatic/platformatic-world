@@ -4,3 +4,5 @@ packages:
   - 'e2e-v4'
 
 minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - '@platformatic/leader'
