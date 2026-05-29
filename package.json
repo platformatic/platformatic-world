@@ -25,5 +25,5 @@
     "eslint": "^9.39.3",
     "neostandard": "^0.13.0"
   },
-  "version": "0.8.0"
+  "version": "0.8.1"
 }
