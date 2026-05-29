@@ -11,7 +11,7 @@ function buildQuery (params: any): Record<string, string | undefined> {
 
 // Uint8Array is lost through JSON serialization, so we base64-encode before HTTP
 // and restore on the way back. The workflow service's encodeData/decodeData handles base64.
-const SERIALIZED_DATA_FIELDS = ['input', 'output', 'result', 'payload', 'metadata']
+const SERIALIZED_DATA_FIELDS = ['input', 'output', 'result', 'payload', 'metadata', 'error']
 
 function serializeForHttp (data: any): any {
   if (!data || typeof data !== 'object') return data
