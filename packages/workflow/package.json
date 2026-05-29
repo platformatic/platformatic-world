@@ -26,7 +26,7 @@
   "dependencies": {
     "@fastify/autoload": "^6.0.3",
     "@fastify/error": "^4.1.0",
-    "@platformatic/leader": "^0.2.0",
+    "@platformatic/leader": "^0.3.0",
     "@platformatic/runtime": "^3.41.0",
     "@platformatic/service": "^3.40.0",
     "cbor-x": "1.6.4",
@@ -41,7 +41,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/pg": "^8.15.4",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.0"
   },
   "repository": {
     "type": "git",

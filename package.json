@@ -6,6 +6,8 @@
     "node": ">=22.19.0"
   },
   "scripts": {
+    "build": "pnpm -C packages/world build",
+    "pretest": "pnpm run build",
     "test": "pnpm --filter '@platformatic/world' --filter '@platformatic/workflow' --filter '@platformatic/workflow-fastify' test",
     "lint": "eslint",
     "test:e2e:v5": "pnpm -C e2e-v5 test",
