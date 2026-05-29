@@ -439,9 +439,14 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'step_started': {
-          // Find step by correlation_id + run_id (LIMIT 1 to handle any legacy duplicates)
+          // FOR UPDATE serializes concurrent step_started requests for the
+          // same step. Without this, two SDK-retry POSTs both pass the
+          // status/started_at checks under READ COMMITTED, both INSERT a
+          // step_started event for the same attempt, and the SDK rejects
+          // the second on replay (CorruptedEventLogError: unconsumed
+          // step_started).
           const stepResult = await client.query(
-            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
             [rawRunId, body.correlationId, appId]
           )
 
@@ -454,6 +459,25 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
               const err: any = new Error(`Step ${body.correlationId} is in terminal state: ${step.status}`)
               err.statusCode = 409
               throw err
+            }
+
+            // Dedupe duplicate step_started for the same attempt. Once a
+            // step is running for attempt N, a second step_started for
+            // attempt N (concurrent SDK retry) is a no-op — return the
+            // existing state without re-inserting the event.
+            const bodyAttempt = body.eventData?.attempt
+            if (step.status === 'running' && (bodyAttempt == null || bodyAttempt === step.attempt)) {
+              const existingEvent = await client.query(
+                `SELECT * FROM workflow_events
+                 WHERE run_id = $1 AND application_id = $2 AND event_type = 'step_started' AND correlation_id = $3
+                 ORDER BY id DESC LIMIT 1`,
+                [rawRunId, appId, body.correlationId]
+              )
+              await client.query('COMMIT')
+              return {
+                event: existingEvent.rows.length > 0 ? formatEvent(existingEvent.rows[0], resolveData) : null,
+                step: formatStep(step, resolveData),
+              }
             }
 
             // Check if retry_after timestamp hasn't been reached yet
@@ -489,8 +513,14 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
 
         case 'step_completed': {
           const resultData = body.eventData?.result ? encodeData(body.eventData.result) : null
+          // FOR UPDATE serializes concurrent step_completed POSTs for the same
+          // step (e.g. SDK retry races on a slow/5xx response that nonetheless
+          // committed server-side). Without it, both transactions read
+          // status='running' under READ COMMITTED, both pass the dedup, and
+          // both INSERT a step_completed event — the SDK rejects the second
+          // as an unconsumed duplicate on replay (CorruptedEventLogError).
           const stepResult = await client.query(
-            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
             [rawRunId, body.correlationId, appId]
           )
           // Skip duplicate completions — the SDK may retry after a transient
@@ -517,8 +547,9 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
 
         case 'step_failed': {
           const error = body.eventData?.error != null ? encodeData(body.eventData.error) : null
+          // FOR UPDATE: see the comment on the step_completed case.
           const stepResult = await client.query(
-            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
             [rawRunId, body.correlationId, appId]
           )
           // Skip duplicate failures — same idempotency guard as step_completed.
