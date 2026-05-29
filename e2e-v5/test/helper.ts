@@ -149,7 +149,10 @@ export async function registerHandlers (): Promise<void> {
       deploymentVersion: DEPLOYMENT_VERSION,
       endpoints: {
         workflow: `${NEXT_URL}/.well-known/workflow/v1/flow`,
-        step: `${NEXT_URL}/.well-known/workflow/v1/step`,
+        // @workflow/next beta.8 collapsed the step + workflow bundles into a
+        // single combined route at /flow — there is no /step route in V2.
+        // Both __wkf_workflow_* and __wkf_step_* queue dispatches target it.
+        step: `${NEXT_URL}/.well-known/workflow/v1/flow`,
         webhook: `${NEXT_URL}/.well-known/workflow/v1/webhook`,
       },
     }),

@@ -678,20 +678,16 @@ test('health check (queue-based): workflow and step endpoints respond', { timeou
   assert.equal(stepResult.healthy, true)
 })
 
-test('health check endpoint (HTTP): flow and step endpoints respond', { timeout: 30_000 }, async () => {
-  const flowRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/flow?__health`, {
+test('health check endpoint (HTTP): combined flow route responds', { timeout: 30_000 }, async () => {
+  // @workflow/next beta.8 ships a single combined route at /flow that
+  // handles both workflow and step execution; there is no separate /step
+  // route in V2. One health probe is sufficient.
+  const res = await fetch(`${NEXT_URL}/.well-known/workflow/v1/flow?__health`, {
     method: 'POST',
   })
-  assert.equal(flowRes.status, 200)
-  const flowBody = await flowRes.text()
-  assert.ok(flowBody.includes('healthy'), `Expected health response, got: ${flowBody}`)
-
-  const stepRes = await fetch(`${NEXT_URL}/.well-known/workflow/v1/step?__health`, {
-    method: 'POST',
-  })
-  assert.equal(stepRes.status, 200)
-  const stepBody = await stepRes.text()
-  assert.ok(stepBody.includes('healthy'), `Expected health response, got: ${stepBody}`)
+  assert.equal(res.status, 200)
+  const body = await res.text()
+  assert.ok(body.includes('healthy'), `Expected health response, got: ${body}`)
 })
 
 // ---- .well-known/agent discovery ----
