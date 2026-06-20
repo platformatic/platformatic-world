@@ -123,7 +123,7 @@ importers:
         version: 3.0.2
       undici:
         specifier: ^8.0.0
-        version: 8.4.1
+        version: 8.5.0
       wattpm:
         specifier: ^3.40.0
         version: 3.57.0
@@ -164,7 +164,7 @@ importers:
         version: 1.6.4
       undici:
         specifier: ^8.0.0
-        version: 8.4.1
+        version: 8.5.0
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -1948,11 +1948,6 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@workflow/world@4.1.5':
-    resolution: {integrity: sha512-ABBqSlMKHTvTLXmducnEXHjXGElHPhvBoltqZ+u7MlsH4JrobGsjSsrMyQHJ6PoSaBOXaN4z7vWu9vaaORjn9g==}
-    peerDependencies:
-      zod: 4.3.6
-
   '@workflow/world@4.2.0':
     resolution: {integrity: sha512-g7XHJXqZG/zfgcL6EQ7RjjAR5pXCYAwBu38Y3zk5meYKdkQbm3KFtSkeAS4NKbhR+5vw1lmoe4XW6YcydGOgbQ==}
     peerDependencies:
@@ -1971,8 +1966,8 @@ packages:
     resolution: {integrity: sha512-DNruLq+kalxcE7JeDxtqrN9kyWjLW8VqsQPLRTwD1t9ck/1rF4qBL0mX5Fe2/xLOMjo5wPb67BNX2kSAhzfLjA==}
     engines: {node: '>=20'}
 
-  '@xhmikosr/bin-wrapper@14.3.0':
-    resolution: {integrity: sha512-rDYWjJ/xmH2vhcGUj6ZdUBmJghKPAlQNhzQY2LxI/6CTE2W/TMhnnrTlpET3TfYql6koTYD2sUiO/t9ew1JaCQ==}
+  '@xhmikosr/bin-wrapper@14.4.0':
+    resolution: {integrity: sha512-Qp4YGNOIBnNEXoyM8nc0L92frBtrerzRpE/zZ4EMU9i37tGGfiuKyQTdHdVUcj7z1ZMfg2hAk+i5gMbWGc5cdw==}
     engines: {node: '>=20'}
 
   '@xhmikosr/decompress-tar@9.0.1':
@@ -2897,8 +2892,8 @@ packages:
     resolution: {integrity: sha512-9ZT504KxEQDamsOogZImAWGEN24R1uFAxU3ZS4AZqn2ooidmN68Olh7n4/RcA4lLatZztjA0ZSuxeLHVoCc8JA==}
     engines: {node: '>=20'}
 
-  filenamify@7.0.1:
-    resolution: {integrity: sha512-9b4rfnaX2MkJCgp27wypV6DAMvj4WMOSgJ+TdcpJIO84Dql+Cv6iJjdG4XDTLubOWkfNiBv3joO59sau/TXw+Q==}
+  filenamify@7.0.2:
+    resolution: {integrity: sha512-fz10TUqSZ1lG7ftW1KnRotJzMD8YRb6kaAQKpZJBLvqXXfFgIEpuazy1w2lK3zhMiBSdH/uF9LFlv5smJ2Jl1w==}
     engines: {node: '>=20'}
 
   finalhandler@1.3.2:
@@ -4712,8 +4707,12 @@ packages:
     resolution: {integrity: sha512-uZsKNuzQxDMUY6M3pIMvy5tvlGmtq8XJ2oLAkfRKGNu+1VQAIvLy2xIVG5ATZl5wDXl/tddByAWCizRbOme+TA==}
     engines: {node: '>=20.18.1'}
 
-  undici@8.4.1:
-    resolution: {integrity: sha512-RNHlB4fxZK0IrkhBsxhlbx7s8kFWwr7rzzOqj5nvZugw3ig3RsB7KW3zVlV0eu8POl+rx5d1hmL7rRg0z1owow==}
+  undici@7.28.0:
+    resolution: {integrity: sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA==}
+    engines: {node: '>=20.18.1'}
+
+  undici@8.5.0:
+    resolution: {integrity: sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==}
     engines: {node: '>=22.19.0'}
 
   unicorn-magic@0.1.0:
@@ -6030,7 +6029,7 @@ snapshots:
       pino-abstract-transport: 2.0.0
       semver: 7.8.4
       split2: 4.2.0
-      undici: 7.27.2
+      undici: 7.28.0
       ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
@@ -6045,7 +6044,7 @@ snapshots:
       pino: 9.14.0
       pino-pretty: 13.1.3
       table: 6.9.0
-      undici: 7.27.2
+      undici: 7.28.0
       ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
@@ -6081,7 +6080,7 @@ snapshots:
       execa: 9.6.1
       fastify: 5.8.5
       pino: 9.14.0
-      undici: 7.27.2
+      undici: 7.28.0
     transitivePeerDependencies:
       - supports-color
 
@@ -6124,7 +6123,7 @@ snapshots:
       long: 5.3.2
       prom-client: 15.1.3
       protobufjs: 8.6.3
-      undici: 7.27.2
+      undici: 7.28.0
 
   '@platformatic/runtime@3.57.0':
     dependencies:
@@ -6159,7 +6158,7 @@ snapshots:
       semgrator: 0.3.0
       sonic-boom: 4.2.1
       systeminformation: 5.31.7
-      undici: 7.27.2
+      undici: 7.28.0
       undici-thread-interceptor: 1.4.0
       ws: 8.21.0
     transitivePeerDependencies:
@@ -6210,7 +6209,7 @@ snapshots:
       pino-pretty: 13.1.3
       rfdc: 1.4.1
       semgrator: 0.3.0
-      undici: 7.27.2
+      undici: 7.28.0
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -6384,7 +6383,7 @@ snapshots:
     dependencies:
       '@swc/core': 1.15.3
       '@swc/counter': 0.1.3
-      '@xhmikosr/bin-wrapper': 14.3.0
+      '@xhmikosr/bin-wrapper': 14.4.0
       commander: 8.3.0
       minimatch: 9.0.9
       piscina: 4.9.3
@@ -7187,11 +7186,6 @@ snapshots:
     optionalDependencies:
       '@opentelemetry/api': 1.9.1
 
-  '@workflow/world@4.1.5(zod@4.3.6)':
-    dependencies:
-      ulid: 3.0.2
-      zod: 4.3.6
-
   '@workflow/world@4.2.0(zod@4.3.6)':
     dependencies:
       ulid: 3.0.2
@@ -7213,7 +7207,7 @@ snapshots:
       execa: 9.6.1
       isexe: 4.0.0
 
-  '@xhmikosr/bin-wrapper@14.3.0':
+  '@xhmikosr/bin-wrapper@14.4.0':
     dependencies:
       '@xhmikosr/bin-check': 8.2.1
       '@xhmikosr/downloader': 16.2.0
@@ -7284,7 +7278,7 @@ snapshots:
       content-disposition: 2.0.1
       ext-name: 5.0.0
       file-type: 21.3.4
-      filenamify: 7.0.1
+      filenamify: 7.0.2
       got: 14.6.6
     transitivePeerDependencies:
       - bare-abort-controller
@@ -8452,7 +8446,7 @@ snapshots:
 
   filename-reserved-regex@4.0.0: {}
 
-  filenamify@7.0.1:
+  filenamify@7.0.2:
     dependencies:
       filename-reserved-regex: 4.0.0
 
@@ -10388,7 +10382,7 @@ snapshots:
       fastq: 1.20.1
       hyperid: 3.3.0
       light-my-request: 6.6.0
-      undici: 7.27.2
+      undici: 7.28.0
 
   undici-types@6.21.0: {}
 
@@ -10398,7 +10392,9 @@ snapshots:
 
   undici@7.27.2: {}
 
-  undici@8.4.1: {}
+  undici@7.28.0: {}
+
+  undici@8.5.0: {}
 
   unicorn-magic@0.1.0: {}
 
