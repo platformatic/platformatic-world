@@ -5,10 +5,10 @@ Next.js workbench + integration tests for `@platformatic/world` and
 setup so the same tests (our ports in `test/vercel-e2e.test.ts` and
 Vercel's upstream suite) behave the same way against our stack.
 
-Pinned to **`workflow@5.0.0-beta.2`** — the SDK version Vercel's main-branch
-CI runs community-world e2e against. The sibling `e2e-v4/` workbench is
-pinned to `workflow@4.2.4` stable and exists to guard the v4 runtime path
-(`pnpm test:e2e:v4` from the repo root).
+Pinned to **`workflow@5.0.0-beta.12`** — tracks the SDK version Vercel's
+main-branch CI runs community-world e2e against. The sibling `e2e-v4/`
+workbench is pinned to `workflow@4.5.0` stable and exists to guard the v4
+runtime path (`pnpm test:e2e:v4` from the repo root).
 
 ## Scripts
 

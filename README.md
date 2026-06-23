@@ -430,8 +430,8 @@ real Workflow Service over HTTP -- pinned to different SDK versions:
 
 | Workbench | SDK version | Purpose |
 |---|---|---|
-| [`e2e-v5/`](e2e-v5/) | `workflow@5.0.0-beta.2` | Mirrors Vercel's main-branch CI. Hosts our Vercel-compat suite (61 ports of upstream tests) and the CBOR-specific assertions. |
-| [`e2e-v4/`](e2e-v4/) | `workflow@4.2.4` (stable) | Guards the v4 runtime path so stable-SDK users keep working. |
+| [`e2e-v5/`](e2e-v5/) | `workflow@5.0.0-beta.12` | Mirrors Vercel's main-branch CI. Hosts our Vercel-compat suite (61 ports of upstream tests) and the CBOR-specific assertions. |
+| [`e2e-v4/`](e2e-v4/) | `workflow@4.5.0` (stable) | Guards the v4 runtime path so stable-SDK users keep working. |
 
 Both workbenches share the same workflow sources and helper, only the
 `workflow` / `@workflow/*` versions in `package.json` differ.
