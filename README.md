@@ -27,15 +27,42 @@ graph LR
     style ICC fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f
 ```
 
-Two packages:
+## Packages
 
 - **`@platformatic/workflow`** (`packages/workflow/`) -- Fastify REST API that owns storage, queue routing, and deployment lifecycle. Multi-tenant with per-app isolation.
 - **`@platformatic/world`** (`packages/world/`) -- Thin HTTP client implementing the `@workflow/world` `World` interface. Drop-in replacement for other world implementations.
+- **`@platformatic/workflow-fastify`** (`packages/workflow-fastify/`) -- Optional Fastify plugin that mounts standalone-build handlers and registers the queue handler on boot. For non-Next.js hosts.
 
-Two e2e workbenches:
+## Operating Modes
 
-- **`e2e-v5/`** — Next.js test app pinned to `workflow@5.0.0-beta.2` SDK. Runs our Vercel-compat suite (`vercel-e2e.test.ts`, 61 ports of upstream tests) and CBOR-specific assertions. Mirrors Vercel's main-branch CI.
-- **`e2e-v4/`** — Same app, pinned to `workflow@4.2.4` stable SDK. Proves `@platformatic/world` still works for users on the stable SDK line.
+`@platformatic/world` and the Workflow Service run in **two distinct modes**.
+The service auto-detects which one based on the presence of a Kubernetes
+service-account token. Apps just point `PLT_WORLD_SERVICE_URL` at the
+service URL and use the same SDK in both modes.
+
+| Aspect | Local mode (single-tenant) | Kubernetes mode (with ICC) |
+|---|---|---|
+| Triggered by | No K8s service-account token detected | K8s service-account token present at runtime |
+| Authentication | None | K8s `TokenReview` per request |
+| Apps | One implicit app (`default`) auto-provisioned | One app per K8s ServiceAccount binding, provisioned by ICC |
+| Pod-to-handler registration | App calls `world.start()` on boot | ICC registers handlers via the admin API; `world.start()` is a no-op |
+| Deployment version | Defaults to `local` (or `PLT_WORLD_DEPLOYMENT_VERSION`) | Auto-detected from the pod's `plt.dev/version` label |
+| Admin API | Open (no auth) | Restricted to the configured admin ServiceAccount (e.g. `platformatic:icc`) |
+| Run-pinning across deploys | Yes (every run records the version that started it) | Yes (same mechanism; ICC drives version lifecycle) |
+
+**Local mode** is what you use for development, CI, and the e2e tests in
+this repo. It runs the same code paths as production -- only the auth and
+handler-registration entry points differ.
+
+**Kubernetes mode** is the production deployment under
+[ICC](https://github.com/platformatic/intelligent-command-center). ICC is
+the control plane: it provisions apps, binds K8s ServiceAccounts to apps,
+registers pod handler endpoints, and drives version lifecycle (drain /
+expire). The service itself is identical between the two modes.
+
+The diagram at the top shows the K8s-with-ICC mode. In local mode, replace
+the ICC box with nothing -- the service runs standalone against PostgreSQL
+and accepts unauthenticated traffic from apps on the same machine.
 
 ## Prerequisites
 
@@ -43,45 +70,52 @@ Two e2e workbenches:
 - PostgreSQL 17
 - pnpm >= 10
 
-## Quick Start
+## Local Mode Quick Start
 
-### Using npx (no clone needed)
+The fastest path: run the service via `npx`, point a Next.js app at it.
+
+### 1. Start the Workflow Service
+
+#### Option A: `npx` (no clone needed)
 
 ```bash
 # Start PostgreSQL
-docker run -d --name workflow-pg -e POSTGRES_USER=wf -e POSTGRES_PASSWORD=wf -e POSTGRES_DB=workflow -p 5434:5432 postgres:17-alpine
+docker run -d --name workflow-pg \
+  -e POSTGRES_USER=wf -e POSTGRES_PASSWORD=wf -e POSTGRES_DB=workflow \
+  -p 5434:5432 postgres:17-alpine
 
 # Start the workflow service
 npx @platformatic/workflow postgresql://wf:wf@localhost:5434/workflow
 ```
 
-### From source
+#### Option B: From source
 
 ```bash
-# Clone and install
 git clone https://github.com/platformatic/platformatic-world.git
 cd platformatic-world
 pnpm install
 
-# Start PostgreSQL
-docker compose up -d
+docker compose up -d              # PostgreSQL on port 5434
 
-# Start the workflow service (single-tenant mode, no auth)
 cd packages/workflow
-npx wattpm start
+npx wattpm start                  # single-tenant mode (no auth)
 ```
 
-The service starts on `http://localhost:3042` by default. Without K8s, it runs in single-tenant mode — no authentication, one implicit application.
+The service starts on `http://localhost:3042`. Migrations run automatically
+on first start. Single-tenant mode is detected automatically because no K8s
+service-account token is present.
 
-### Run a Next.js App Locally
+### 2. Wire Your App to the Service
 
-Apps using the Vercel Workflow SDK need a queue handler registered on startup. In Kubernetes with ICC this is automatic, but for local development your app must call `world.start()` itself.
+In local mode the app must call `world.start()` once on boot to register
+its callback endpoints with the service. (In K8s + ICC, ICC handles this
+and `world.start()` becomes a no-op.)
 
-For Next.js, create an `instrumentation.ts` in your project root:
+For Next.js, create `instrumentation.ts` in your project root:
 
 ```typescript
 // instrumentation.ts
-export async function register() {
+export async function register () {
   if (process.env.PLT_WORLD_SERVICE_URL) {
     const { createWorld } = await import('@platformatic/world')
     const world = createWorld()
@@ -99,9 +133,15 @@ PORT=3000 \
 npx next start -p 3000
 ```
 
-For other frameworks, call `world.start()` during your server's startup. See the [User Guide](./doc/user-guide.md#local-development-without-watt-or-icc) for details.
+For other frameworks (Express, Koa, Fastify, plain Node), call
+`world.start()` from your server bootstrap. For Fastify specifically,
+[`@platformatic/workflow-fastify`](packages/workflow-fastify/) does this
+plus mounts the standalone-build handlers.
 
-### Use the World Client Directly
+### 3. (Optional) Use the World Client Directly
+
+For low-level scripting or tests, skip the SDK and drive the world client
+directly:
 
 ```typescript
 import { createPlatformaticWorld } from '@platformatic/world'
@@ -125,9 +165,54 @@ const { run } = await world.events.create(null, {
 // Queue a message (routed to the correct deployment version)
 await world.queue('__wkf_workflow_my-workflow', { runId: run.runId })
 
-// Clean up
 await world.close()
 ```
+
+## Kubernetes Mode (with ICC)
+
+In production the Workflow Service runs as a Kubernetes Deployment, fronted
+by ICC (the Platformatic control plane). The setup differs from local mode
+in three ways:
+
+1. **Service detects K8s automatically.** When the pod has a projected
+   service-account token at
+   `/var/run/secrets/kubernetes.io/serviceaccount/token`, the service
+   starts in multi-tenant mode. No flag is needed.
+2. **ICC provisions and binds apps.** Apps are created via
+   `POST /api/v1/apps` and bound to a K8s ServiceAccount via
+   `POST /api/v1/apps/:appId/k8s-binding`. Pods then authenticate with
+   their projected token; the service validates it via the K8s
+   `TokenReview` API and maps it to the bound app.
+3. **ICC registers pod handlers and drives the version lifecycle.** Pods
+   do not call `world.start()` themselves -- ICC posts to
+   `POST /api/v1/apps/:appId/handlers` when a pod is ready, and drains /
+   expires versions via the admin API as deploys roll out.
+
+Required environment for the service in K8s mode:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `K8S_ADMIN_SERVICE_ACCOUNT` | The ICC ServiceAccount, e.g. `platformatic:icc` |
+| `K8S_API_SERVER` | Defaults to `https://kubernetes.default.svc` |
+| `K8S_CA_CERT` | Defaults to the in-pod CA path |
+
+App pods only need:
+
+```
+WORKFLOW_TARGET_WORLD=@platformatic/world
+PLT_WORLD_SERVICE_URL=http://workflow-service.<namespace>.svc.cluster.local:3042
+```
+
+`PLT_WORLD_APP_ID` is resolved from the pod's ServiceAccount binding;
+`PLT_WORLD_DEPLOYMENT_VERSION` is read from the pod's `plt.dev/version`
+label. Both can be overridden explicitly if needed.
+
+Production deployment is owned by ICC (see the
+[ICC repo](https://github.com/platformatic/intelligent-command-center) and
+the [Deployment Lifecycle section](#deployment-lifecycle-icc-integration)
+below for the contract between the service and ICC). This repo does not
+ship K8s manifests.
 
 ## Configuration
 
@@ -314,7 +399,11 @@ Exceeding a quota returns HTTP 429.
 
 The `/metrics` endpoint returns Prometheus-compatible metrics provided by the Platformatic runtime (HTTP request duration, status codes, Node.js runtime stats).
 
-## Development
+## Testing
+
+All tests run against the **local mode** of the Workflow Service (no K8s,
+no ICC) backed by PostgreSQL on port 5434 from `docker-compose.yml`. K8s
+mode is exercised in the ICC integration suite, not here.
 
 ```bash
 # Start PostgreSQL (port 5434)
@@ -323,15 +412,75 @@ docker compose up -d
 # Install dependencies
 pnpm install
 
-# Run all unit/integration tests (87 workflow + 12 world)
+# Run unit + integration tests across the three packages
 pnpm test
-
-# Run Vercel-compatible e2e tests (57 tests — requires PostgreSQL on port 5434)
-cd e2e && node --test --test-force-exit test/vercel-e2e.test.ts
-
-# Run our own e2e tests
-cd e2e && node --test --test-force-exit test/workflow.test.ts
 ```
+
+`pnpm test` runs:
+- `@platformatic/workflow` -- service unit and integration tests (database,
+  auth, queue routing, draining, quotas, etc.)
+- `@platformatic/world` -- world client unit tests
+- `@platformatic/workflow-fastify` -- Fastify plugin tests
+
+### E2E Workbenches
+
+The repo ships **two Next.js workbenches** that exercise the full stack --
+real Next.js app, real Workflow SDK, real `@platformatic/world` adapter,
+real Workflow Service over HTTP -- pinned to different SDK versions:
+
+| Workbench | SDK version | Purpose |
+|---|---|---|
+| [`e2e-v5/`](e2e-v5/) | `workflow@5.0.0-beta.2` | Mirrors Vercel's main-branch CI. Hosts our Vercel-compat suite (61 ports of upstream tests) and the CBOR-specific assertions. |
+| [`e2e-v4/`](e2e-v4/) | `workflow@4.2.4` (stable) | Guards the v4 runtime path so stable-SDK users keep working. |
+
+Both workbenches share the same workflow sources and helper, only the
+`workflow` / `@workflow/*` versions in `package.json` differ.
+
+Each test run boots:
+1. The Workflow Service via `wattpm start` (random port per run).
+2. The Next.js app via `next start` (random port per run).
+3. Truncates the database between suites for isolation.
+
+Run from the repo root:
+
+```bash
+# Local-suite e2e against v5 beta SDK
+pnpm test:e2e:v5
+
+# Local-suite e2e against v4 stable SDK
+pnpm test:e2e:v4
+
+# Vercel-compat suite (v5 workbench, ports of upstream tests)
+pnpm test:e2e:vercel
+```
+
+Or run a single file directly:
+
+```bash
+cd e2e-v5
+node --test --test-force-exit test/workflow.test.ts
+node --test --test-force-exit test/vercel-e2e.test.ts
+```
+
+CI runs all three suites (`pnpm test:e2e:v4`, `pnpm test:e2e:v5`,
+`pnpm test:e2e:vercel`) on every PR.
+
+#### What each suite covers
+
+- **`workflow.test.ts`** (both workbenches) -- our own e2e cases: hook
+  resume, retries, replay, cancel, streams, multi-step pipelines.
+- **`cbor-e2e.test.ts`** (both workbenches) -- CBOR queue-transport
+  assertions; verifies `Uint8Array` survives a queue round-trip without
+  base64 wrapping.
+- **`vercel-e2e.test.ts`** (v5 only) -- 61 ports of Vercel's
+  community-world upstream tests; proves the Platformatic world is a
+  drop-in for Vercel's own integration matrix.
+- **`compat.test.ts`** (v4 only) -- compatibility guards specific to the
+  v4 stable line (older streamer API shape, etc.).
+
+See [`e2e-v5/README.md`](e2e-v5/README.md) for the
+`WORKFLOW_PUBLIC_MANIFEST=1` build flag and other workbench-specific
+notes.
 
 ### Project Structure
 
