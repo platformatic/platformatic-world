@@ -1,0 +1,34 @@
+diff --git a/dist/fast-discovery.js b/dist/fast-discovery.js
+index d5b928e739b1c7470382a1907a6344a8ec68dd17..860c37a094799a971b22155539eeadf041bfe848 100644
+--- a/dist/fast-discovery.js
++++ b/dist/fast-discovery.js
+@@ -454,10 +454,25 @@ export async function fastDiscoverEntries({ entryPoints, state, defaultTsconfigP
+             : resolve(dirname(importer), strippedSpecifier);
+         const extension = extname(basePath);
+         if (extension !== '') {
+-            return FAST_DISCOVERY_SOURCE_EXTENSION_SET.has(extension) &&
+-                (await fileExists(basePath))
+-                ? normalizePath(basePath)
+-                : null;
++            if (!FAST_DISCOVERY_SOURCE_EXTENSION_SET.has(extension)) {
++                return null;
++            }
++            if (await fileExists(basePath)) {
++                return normalizePath(basePath);
++            }
++            // TS-source resolution: a `.js`/`.jsx`/`.mjs`/`.cjs` import may map
++            // to a sibling `.ts`/`.tsx`/`.mts`/`.cts` source file under
++            // moduleResolution: bundler. Try the TS alternative when the
++            // exact JS sibling is absent.
++            const JS_TO_TS = { '.js': '.ts', '.jsx': '.tsx', '.mjs': '.mts', '.cjs': '.cts' };
++            const tsExtension = JS_TO_TS[extension];
++            if (tsExtension) {
++                const tsCandidate = basePath.slice(0, basePath.length - extension.length) + tsExtension;
++                if (await fileExists(tsCandidate)) {
++                    return normalizePath(tsCandidate);
++                }
++            }
++            return null;
+         }
+         for (const candidate of [
+             ...FAST_DISCOVERY_SOURCE_EXTENSIONS.map((candidateExtension) => `${basePath}${candidateExtension}`),

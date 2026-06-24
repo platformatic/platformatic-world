@@ -19,7 +19,10 @@
       "@swc/core",
       "esbuild",
       "sharp"
-    ]
+    ],
+    "patchedDependencies": {
+      "@workflow/builders@5.0.0-beta.21": "patches/@workflow__builders@5.0.0-beta.21.patch"
+    }
   },
   "devDependencies": {
     "eslint": "^9.39.3",
