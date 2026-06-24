@@ -42,6 +42,54 @@ describe('events', () => {
     assert.ok(body.run.runId)
   })
 
+  it('should be idempotent on duplicate run_created for the same runId', async () => {
+    // The SDK retries the trigger endpoint on transient errors. A second
+    // POST for the same runId must return 200 (with the existing run state),
+    // not 500 from the workflow_runs unique constraint, and must not append
+    // a duplicate run_created event to the log.
+    const runId = `wrun_idempotent_${randomBytes(8).toString('hex')}`
+    const payload = {
+      eventType: 'run_created',
+      specVersion: 2,
+      eventData: {
+        deploymentId: 'v1.0.0',
+        workflowName: 'idempotent-test',
+        input: { n: 1 },
+      },
+    }
+
+    const first = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+      payload,
+    })
+    assert.equal(first.statusCode, 200)
+    const firstBody = JSON.parse(first.body)
+    assert.equal(firstBody.run.runId, runId)
+
+    const second = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+      payload,
+    })
+    assert.equal(second.statusCode, 200)
+    const secondBody = JSON.parse(second.body)
+    assert.equal(secondBody.run.runId, runId)
+
+    // Exactly one run_created event in the log, no duplicates.
+    const eventsRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+    })
+    assert.equal(eventsRes.statusCode, 200)
+    const events = JSON.parse(eventsRes.body)
+    const runCreatedEvents = events.data.filter((e: any) => e.eventType === 'run_created')
+    assert.equal(runCreatedEvents.length, 1, 'expected exactly one run_created event')
+  })
+
   it('should handle full run lifecycle', async () => {
     // Create run
     const createRes = await ctx.app.inject({
