@@ -31,7 +31,7 @@
     "@platformatic/service": "^3.40.0",
     "cbor-x": "1.6.4",
     "fastify": "^5.3.3",
-    "fastify-plugin": "^5.1.0",
+    "fastify-plugin": "^6.0.0",
     "pg": "^8.16.0",
     "postgrator": "^8.0.0",
     "ulid": "^3.0.2",
