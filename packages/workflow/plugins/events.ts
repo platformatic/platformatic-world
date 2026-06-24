@@ -233,16 +233,39 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           const eventData = body.eventData || {}
           const input = encodeData(eventData.input)
 
-          await client.query(
+          // Idempotent: the SDK retries this endpoint on transient errors
+          // (network blip, timeout, 5xx). A duplicate POST for the same runId
+          // must not 500 on the workflow_runs unique constraint — return the
+          // existing run state instead. Mirrors the run_started handler's
+          // existence-check pattern, just via an atomic upsert.
+          const inserted = await client.query(
             `INSERT INTO workflow_runs (id, application_id, workflow_name, deployment_id, status, input, execution_context, spec_version)
-             VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7)`,
+             VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7)
+             ON CONFLICT (id) DO NOTHING
+             RETURNING id`,
             [runId, appId, eventData.workflowName, eventData.deploymentId, input, eventData.executionContext || null, body.specVersion || null]
           )
 
-          const eventRow = await insertEvent(client, runId, appId, body)
+          // Only emit the run_created event row when we actually created the
+          // run. The event log has no unique key on (run_id, event_type) so an
+          // unconditional insert would leave a duplicate run_created in the
+          // log on each retry, which the SDK consumer would reject on replay.
+          let eventRow: any
+          if (inserted.rows.length > 0) {
+            eventRow = await insertEvent(client, runId, appId, body)
+          } else {
+            const existing = await client.query(
+              `SELECT * FROM workflow_events
+               WHERE run_id = $1 AND application_id = $2 AND event_type = 'run_created'
+               ORDER BY id ASC LIMIT 1`,
+              [runId, appId]
+            )
+            eventRow = existing.rows[0] || null
+          }
+
           const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [runId])).rows[0]
 
-          result = { event: formatEvent(eventRow, resolveData), run: formatRun(runRow, resolveData) }
+          result = { event: eventRow ? formatEvent(eventRow, resolveData) : null, run: formatRun(runRow, resolveData) }
           break
         }
 
