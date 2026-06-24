@@ -14,13 +14,6 @@
     "test:e2e:v4": "pnpm -C e2e-v4 test",
     "test:e2e:vercel": "pnpm -C e2e-v5 test:vercel"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@swc/core",
-      "esbuild",
-      "sharp"
-    ]
-  },
   "devDependencies": {
     "eslint": "^9.39.3",
     "neostandard": "^0.13.0"
