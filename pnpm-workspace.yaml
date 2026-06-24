@@ -3,8 +3,14 @@ packages:
   - 'e2e-v5'
   - 'e2e-v4'
 
+# pnpm 11 replaces the old `pnpm.onlyBuiltDependencies` array in
+# package.json with this dict-shaped allowlist here. Listed packages must
+# run install scripts (native builds); others are skipped silently.
+allowBuilds:
+  '@swc/core': true
+  cbor-extract: true
+  esbuild: true
+  protobufjs: true
+  sharp: true
+
 minimumReleaseAge: 1440
-minimumReleaseAgeExclude:
-  - '@platformatic/leader'
-  - workflow
-  - '@workflow/*'
