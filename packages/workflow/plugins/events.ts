@@ -445,10 +445,50 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           // step_started event for the same attempt, and the SDK rejects
           // the second on replay (CorruptedEventLogError: unconsumed
           // step_started).
-          const stepResult = await client.query(
+          let stepResult = await client.query(
             'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
             [rawRunId, body.correlationId, appId]
           )
+
+          // Lazy inline step (workflow@5.0.0-beta.21+): when the SDK's
+          // suspension handler takes the inline path it defers `step_created`
+          // and ships the step input on this `step_started`. The world is
+          // expected to atomically create the step entity and claim
+          // ownership. Exactly-one-owner: a concurrent loser must get 409
+          // so the SDK maps it to EntityConflictError → `{ type: 'skipped' }`
+          // and never runs the body. We detect the lazy path by
+          // `eventData.input !== undefined` (the non-lazy path omits it).
+          if (stepResult.rows.length === 0 && body.eventData?.input !== undefined) {
+            const lazyStepId = randomUUID()
+            const lazyInput = encodeData(body.eventData.input)
+            const insertResult = await client.query(
+              `INSERT INTO workflow_steps
+                 (id, run_id, application_id, correlation_id, step_name, status,
+                  input, spec_version, started_at, attempt)
+               VALUES ($1, $2, $3, $4, $5, 'running', $6, $7, NOW(), 1)
+               ON CONFLICT (run_id, correlation_id, step_name) DO NOTHING
+               RETURNING id`,
+              [lazyStepId, rawRunId, appId, body.correlationId,
+                body.eventData.stepName, lazyInput, body.specVersion || null]
+            )
+
+            if (insertResult.rows.length === 0) {
+              // Another caller won the atomic claim. Surface 409 so the SDK
+              // skips this run of the step body.
+              await client.query('COMMIT')
+              const err: any = new Error(`Step ${body.correlationId} already claimed`)
+              err.statusCode = 409
+              throw err
+            }
+
+            const eventRow = await insertEvent(client, rawRunId, appId, body)
+            const lazyRow = (await client.query(
+              'SELECT * FROM workflow_steps WHERE id = $1',
+              [insertResult.rows[0].id]
+            )).rows[0]
+            result = { event: formatEvent(eventRow, resolveData), step: formatStep(lazyRow, resolveData) }
+            break
+          }
 
           if (stepResult.rows.length > 0) {
             const step = stepResult.rows[0]
