@@ -13,4 +13,11 @@ allowBuilds:
   protobufjs: true
   sharp: true
 
+# pnpm 11 prompts before purging an existing modules directory in non-TTY
+# environments and aborts the install if it can't read a yes/no answer.
+# CI runners set CI=true so they bypass this, but K8s pods and other
+# headless contexts don't — disable the prompt globally so the image is
+# self-contained.
+confirmModulesPurge: false
+
 minimumReleaseAge: 1440
