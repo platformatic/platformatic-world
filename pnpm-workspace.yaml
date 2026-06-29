@@ -21,3 +21,9 @@ allowBuilds:
 confirmModulesPurge: false
 
 minimumReleaseAge: 1440
+# Skip the 24h release-age gate for the Vercel Workflow SDK — we actively
+# track unreleased betas and the 24h delay would slow us by a full release
+# cycle on every bump.
+minimumReleaseAgeExclude:
+  - workflow
+  - '@workflow/*'

@@ -1,12 +1,17 @@
 {
   "version": "1.0.0",
   "steps": {
+    "node_modules/.pnpm/workflow@4.5.0_@nestjs+common@11.1.27_reflect-metadata@0.2.2_rxjs@7.8.2__@nestjs+core@1_542b37e7752bae24f63e6944dfe110e1/node_modules/workflow/dist/stdlib.js": {
+      "fetch": {
+        "stepId": "step//workflow@4.5.0//fetch"
+      }
+    },
     "workflows/simple.ts": {
       "add": {
         "stepId": "step//./workflows/simple//add"
       }
     },
-    "node_modules/.pnpm/workflow@4.2.4_@nestjs+common@11.1.19_reflect-metadata@0.2.2_rxjs@7.8.2__@nestjs+core@1_0aa0ebcd79894260bed224eacbb19c82/node_modules/workflow/dist/internal/builtins.js": {
+    "node_modules/.pnpm/workflow@4.5.0_@nestjs+common@11.1.27_reflect-metadata@0.2.2_rxjs@7.8.2__@nestjs+core@1_542b37e7752bae24f63e6944dfe110e1/node_modules/workflow/dist/internal/builtins.js": {
       "__builtin_response_array_buffer": {
         "stepId": "__builtin_response_array_buffer"
       },
@@ -15,11 +20,6 @@
       },
       "__builtin_response_text": {
         "stepId": "__builtin_response_text"
-      }
-    },
-    "node_modules/.pnpm/workflow@4.2.4_@nestjs+common@11.1.19_reflect-metadata@0.2.2_rxjs@7.8.2__@nestjs+core@1_0aa0ebcd79894260bed224eacbb19c82/node_modules/workflow/dist/stdlib.js": {
-      "fetch": {
-        "stepId": "step//workflow@4.2.4//fetch"
       }
     },
     "workflows/compat.ts": {

@@ -4,8 +4,12 @@
 import { sleep, FatalError, RetryableError, createHook, createWebhook, type RequestWithResponse, fetch, getStepMetadata, getWorkflowMetadata, getWritable } from 'workflow'
 import { start } from 'workflow/api'
 import { callThrower, stepThatThrowsFromHelper } from './helpers'
-import { importedStepOnly } from './_imported_step_only.js'
-import { addVectors, createVector, scaleVector, sumVectors } from './serde-steps.js'
+// Note: imports are intentionally extension-less. The upstream Vercel
+// reference uses `.js` here, but @workflow/builders@5.0.0-beta.21+'s
+// fast-discovery does not rewrite `.js` to `.ts` and would drop these
+// step files from the manifest.
+import { importedStepOnly } from './_imported_step_only'
+import { addVectors, createVector, scaleVector, sumVectors } from './serde-steps'
 import { pathsAliasHelper } from '@repo/lib/steps/paths-alias-test'
 
 // ---- addTen: multi-step chaining ----
