@@ -23,6 +23,7 @@
     "dist"
   ],
   "dependencies": {
+    "@platformatic/globals": "^3.57.0",
     "cbor-x": "1.6.4",
     "undici": "^8.0.0"
   },
