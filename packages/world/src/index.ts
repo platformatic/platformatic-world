@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Agent } from 'undici'
+import { getSharedContext } from '@platformatic/globals'
 import type { World } from '@workflow/world'
 import { SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT } from '@workflow/world'
 import { HttpClient } from './lib/client.ts'
@@ -56,6 +56,21 @@ export interface CreateWorldOptions {
   deploymentVersion: string
 }
 
+// Read the deployment version from the watt runtime shared context, if something
+// pushed one there. getSharedContext returns { get, update } inside a runtime, or
+// undefined off-runtime with throwOnMissing:false -- a safe no-op standalone.
+async function versionFromSharedContext (): Promise<string | undefined> {
+  try {
+    const shared = getSharedContext({ throwOnMissing: false }) as
+      { get?: () => unknown } | undefined
+    if (!shared?.get) return undefined
+    const ctx = await shared.get() as { deploymentVersion?: string } | undefined
+    return ctx?.deploymentVersion
+  } catch {
+    return undefined
+  }
+}
+
 function saPath (file: string): string {
   const base = process.env.PLT_WORLD_SA_PATH || '/var/run/secrets/kubernetes.io/serviceaccount'
   return `${base}/${file}`
@@ -67,31 +82,6 @@ function isRunningInK8s (): boolean {
     return true
   } catch {
     return false
-  }
-}
-
-async function readVersionFromK8sApi (): Promise<string | undefined> {
-  try {
-    const token = readFileSync(saPath('token'), 'utf8').trim()
-    const namespace = readFileSync(saPath('namespace'), 'utf8').trim()
-    const podName = process.env.HOSTNAME
-    if (!podName) return undefined
-
-    const ca = readFileSync(saPath('ca.crt'))
-    const dispatcher = new Agent({ connect: { ca } })
-    const res = await fetch(
-      `https://kubernetes.default.svc/api/v1/namespaces/${namespace}/pods/${podName}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        dispatcher,
-      } as RequestInit
-    )
-
-    if (!res.ok) return undefined
-    const pod = await res.json() as { metadata?: { labels?: Record<string, string> } }
-    return pod?.metadata?.labels?.['plt.dev/version'] || undefined
-  } catch {
-    return undefined
   }
 }
 
@@ -111,18 +101,33 @@ export function createWorld (options?: Partial<CreateWorldOptions>): World {
   }
 
   const appId = options?.appId || process.env.PLT_WORLD_APP_ID || readAppName()
-  const explicitVersion = options?.deploymentVersion || process.env.PLT_WORLD_DEPLOYMENT_VERSION
-  const config = { serviceUrl, appId, deploymentVersion: explicitVersion || 'local' }
-  const world = createPlatformaticWorld(config)
+  const explicitVersion = options?.deploymentVersion ||
+    process.env.PLT_WORLD_DEPLOYMENT_VERSION ||
+    process.env.PLT_DEPLOYMENT_VERSION
+  // Version comes from the environment first: options, PLT_WORLD_DEPLOYMENT_VERSION,
+  // or PLT_DEPLOYMENT_VERSION. No K8s API read.
+  const config: PlatformaticWorldConfig = {
+    serviceUrl,
+    appId,
+    deploymentVersion: explicitVersion || 'local',
+    // In K8s ICC assigns the version, so a 'local' stamp means "not resolved yet" and
+    // must not be used to enqueue (see queue.ts). Standalone/local dev keeps 'local'.
+    requireResolvedVersion: isRunningInK8s(),
+  }
 
-  if (!explicitVersion && isRunningInK8s()) {
-    const originalStart = world.start!
-    world.start = async function () {
-      const version = await readVersionFromK8sApi()
+  // No explicit version: start at 'local'. When running inside a watt runtime, the
+  // version can be provided later via the shared context, so refresh before each
+  // queue read and latch it -- the pod starts stamping the real version with no
+  // restart. Off-runtime (standalone) this is a no-op.
+  if (!explicitVersion) {
+    config.refreshDeploymentVersion = async () => {
+      if (config.deploymentVersion !== 'local') return
+      const version = await versionFromSharedContext()
       if (version) config.deploymentVersion = version
-      return originalStart.call(this)
     }
   }
+
+  const world = createPlatformaticWorld(config)
 
   return world
 }

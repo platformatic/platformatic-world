@@ -67,9 +67,11 @@ test('reads from env vars', async () => {
 test('defaults deploymentVersion to local', async () => {
   const originalUrl = process.env.PLT_WORLD_SERVICE_URL
   const originalVersion = process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  const originalGeneralVersion = process.env.PLT_DEPLOYMENT_VERSION
 
   process.env.PLT_WORLD_SERVICE_URL = 'http://localhost:9999'
   delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  delete process.env.PLT_DEPLOYMENT_VERSION
 
   try {
     const world = createWorld()
@@ -81,6 +83,113 @@ test('defaults deploymentVersion to local', async () => {
     else delete process.env.PLT_WORLD_SERVICE_URL
     if (originalVersion) process.env.PLT_WORLD_DEPLOYMENT_VERSION = originalVersion
     else delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+    if (originalGeneralVersion) process.env.PLT_DEPLOYMENT_VERSION = originalGeneralVersion
+    else delete process.env.PLT_DEPLOYMENT_VERSION
+  }
+})
+
+test('falls back to PLT_DEPLOYMENT_VERSION when PLT_WORLD_DEPLOYMENT_VERSION is unset', async () => {
+  const originalUrl = process.env.PLT_WORLD_SERVICE_URL
+  const originalWorldVersion = process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  const originalVersion = process.env.PLT_DEPLOYMENT_VERSION
+
+  process.env.PLT_WORLD_SERVICE_URL = 'http://localhost:9999'
+  delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  process.env.PLT_DEPLOYMENT_VERSION = 'img-1.4.2'
+
+  try {
+    const world = createWorld()
+    const deploymentId = await world.getDeploymentId()
+    assert.equal(deploymentId, 'img-1.4.2')
+    await world.close()
+  } finally {
+    if (originalUrl) process.env.PLT_WORLD_SERVICE_URL = originalUrl
+    else delete process.env.PLT_WORLD_SERVICE_URL
+    if (originalWorldVersion) process.env.PLT_WORLD_DEPLOYMENT_VERSION = originalWorldVersion
+    else delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+    if (originalVersion) process.env.PLT_DEPLOYMENT_VERSION = originalVersion
+    else delete process.env.PLT_DEPLOYMENT_VERSION
+  }
+})
+
+test('starts at local and picks up the version pushed to the shared context later', async () => {
+  const originalUrl = process.env.PLT_WORLD_SERVICE_URL
+  const originalWorldVersion = process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  const originalVersion = process.env.PLT_DEPLOYMENT_VERSION
+  const originalGlobal = (globalThis as any).platformatic
+
+  process.env.PLT_WORLD_SERVICE_URL = 'http://localhost:9999'
+  delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  delete process.env.PLT_DEPLOYMENT_VERSION
+
+  // Simulate the watt runtime shared context; starts with no version.
+  let sharedCtx: { deploymentVersion?: string } = {}
+  ;(globalThis as any).platformatic = { sharedContext: { get: () => sharedCtx } }
+
+  try {
+    const world = createWorld()
+    // No env version and nothing in the shared context yet -> local.
+    assert.equal(await world.getDeploymentId(), 'local')
+
+    // Version arrives later (e.g. watt-extra pushes it once ICC resolves it).
+    sharedCtx = { deploymentVersion: 'v9' }
+    assert.equal(await world.getDeploymentId(), 'v9')
+
+    // Latched: once resolved it stops consulting the shared context.
+    sharedCtx = {}
+    assert.equal(await world.getDeploymentId(), 'v9')
+
+    await world.close()
+  } finally {
+    if (originalUrl) process.env.PLT_WORLD_SERVICE_URL = originalUrl
+    else delete process.env.PLT_WORLD_SERVICE_URL
+    if (originalWorldVersion) process.env.PLT_WORLD_DEPLOYMENT_VERSION = originalWorldVersion
+    else delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+    if (originalVersion) process.env.PLT_DEPLOYMENT_VERSION = originalVersion
+    else delete process.env.PLT_DEPLOYMENT_VERSION
+    ;(globalThis as any).platformatic = originalGlobal
+  }
+})
+
+test('refuses to enqueue while the version is unresolved (local) in K8s', async () => {
+  const originalUrl = process.env.PLT_WORLD_SERVICE_URL
+  const originalSaPath = process.env.PLT_WORLD_SA_PATH
+  const originalWorldVersion = process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  const originalVersion = process.env.PLT_DEPLOYMENT_VERSION
+  const originalGlobal = (globalThis as any).platformatic
+
+  // Fake SA mount so isRunningInK8s() is true.
+  const fakeSaDir = join(tmpdir(), `plt-world-k8s-block-${process.pid}`)
+  mkdirSync(fakeSaDir, { recursive: true })
+  writeFileSync(join(fakeSaDir, 'token'), 'fake-token')
+
+  process.env.PLT_WORLD_SERVICE_URL = 'http://localhost:9999'
+  process.env.PLT_WORLD_SA_PATH = fakeSaDir
+  delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  delete process.env.PLT_DEPLOYMENT_VERSION
+  ;(globalThis as any).platformatic = undefined // no shared context -> stays local
+
+  try {
+    const world = createWorld()
+    assert.equal(await world.getDeploymentId(), 'local')
+    // Enqueuing is refused so the run is not pinned to 'local' (its messages would
+    // never route to the ICC-registered real-version handlers). Caller retries.
+    await assert.rejects(
+      () => world.queue('my-queue' as any, {} as any),
+      /not resolved/
+    )
+    await world.close()
+  } finally {
+    if (originalUrl) process.env.PLT_WORLD_SERVICE_URL = originalUrl
+    else delete process.env.PLT_WORLD_SERVICE_URL
+    if (originalSaPath) process.env.PLT_WORLD_SA_PATH = originalSaPath
+    else delete process.env.PLT_WORLD_SA_PATH
+    if (originalWorldVersion) process.env.PLT_WORLD_DEPLOYMENT_VERSION = originalWorldVersion
+    else delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+    if (originalVersion) process.env.PLT_DEPLOYMENT_VERSION = originalVersion
+    else delete process.env.PLT_DEPLOYMENT_VERSION
+    ;(globalThis as any).platformatic = originalGlobal
+    rmSync(fakeSaDir, { recursive: true, force: true })
   }
 })
 
@@ -114,7 +223,7 @@ test('falls back to local when not in K8s and no env var', async () => {
   }
 })
 
-test('env var takes precedence over K8s API lookup', async () => {
+test('reads the deployment version from PLT_WORLD_DEPLOYMENT_VERSION', async () => {
   const originalUrl = process.env.PLT_WORLD_SERVICE_URL
   const originalVersion = process.env.PLT_WORLD_DEPLOYMENT_VERSION
 
