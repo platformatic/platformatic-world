@@ -817,11 +817,13 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
     const appId = request.appId
     const limit = Math.min(parseInt(query.limit || '100', 10), 1000)
     const sortOrder = query.sortOrder === 'desc' ? 'DESC' : 'ASC'
-    const cursor = query.cursor ? parseInt(query.cursor, 10) : 0
+    const cursor = query.cursor ? parseInt(query.cursor, 10) : null
+    const cursorOperator = sortOrder === 'DESC' ? '<' : '>'
 
     const result = await app.pg.query(
       `SELECT * FROM workflow_events
-       WHERE run_id = $1 AND application_id = $2 AND id > $3
+       WHERE run_id = $1 AND application_id = $2
+         AND ($3::int IS NULL OR id ${cursorOperator} $3)
        ORDER BY id ${sortOrder}
        LIMIT $4`,
       [runId, appId, cursor, limit + 1]
@@ -829,29 +831,38 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
 
     const hasMore = result.rows.length > limit
     const data = result.rows.slice(0, limit).map(row => formatEvent(row, query.resolveData))
-    const nextCursor = hasMore && data.length > 0 ? String(result.rows[limit - 1].id) : null
+    const nextCursor = data.length > 0 ? data[data.length - 1].eventId : query.cursor ?? null
 
     return { data, cursor: nextCursor, hasMore }
   })
 
   // List events by correlation ID
   app.get('/api/v1/apps/:appId/events/by-correlation', async (request) => {
-    const query = request.query as { correlationId: string; limit?: string; cursor?: string; resolveData?: string }
+    const query = request.query as {
+      correlationId: string
+      limit?: string
+      cursor?: string
+      sortOrder?: string
+      resolveData?: string
+    }
     const appId = request.appId
     const limit = Math.min(parseInt(query.limit || '100', 10), 1000)
-    const cursor = query.cursor ? parseInt(query.cursor, 10) : 0
+    const sortOrder = query.sortOrder === 'desc' ? 'DESC' : 'ASC'
+    const cursor = query.cursor ? parseInt(query.cursor, 10) : null
+    const cursorOperator = sortOrder === 'DESC' ? '<' : '>'
 
     const result = await app.pg.query(
       `SELECT * FROM workflow_events
-       WHERE application_id = $1 AND correlation_id = $2 AND id > $3
-       ORDER BY id ASC
+       WHERE application_id = $1 AND correlation_id = $2
+         AND ($3::int IS NULL OR id ${cursorOperator} $3)
+       ORDER BY id ${sortOrder}
        LIMIT $4`,
       [appId, query.correlationId, cursor, limit + 1]
     )
 
     const hasMore = result.rows.length > limit
     const data = result.rows.slice(0, limit).map(row => formatEvent(row, query.resolveData))
-    const nextCursor = hasMore && data.length > 0 ? String(result.rows[limit - 1].id) : null
+    const nextCursor = data.length > 0 ? data[data.length - 1].eventId : query.cursor ?? null
 
     return { data, cursor: nextCursor, hasMore }
   })

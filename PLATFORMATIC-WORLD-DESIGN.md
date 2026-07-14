@@ -236,7 +236,7 @@ Each event type is processed in a single database transaction. The response incl
 
 ```
 GET    /api/v1/apps/:appId/runs/:runId/events
-  Query: ?order=asc&limit=100&cursor=0&resolveData=none
+  Query: ?sortOrder=asc&limit=100&cursor=0&resolveData=none
   → Returns paginated events for the run (used during replay)
 
 GET    /api/v1/apps/:appId/events/by-correlation
@@ -672,7 +672,7 @@ sequenceDiagram
     participant WFS as Workflow Service
 
     Pod->>WFS: world.queue - wkf_step_myStep, workflowRunId, stepId
-    Note over WFS: 1. Extract deploymentId from message<br/>2. Find registered pod for that deploymentId<br/>3. POST to pod queue handler endpoint
+    Note over WFS: 1. Extract deploymentId from message<br/>2. Find registered endpoint for that deploymentId<br/>3. POST to queue handler endpoint
     WFS->>Pod: Dispatch step to same version that started the run
     Note over Pod: Handler executes the step<br/>Step result stored via WF Service API
     Pod->>WFS: world.queue - wkf_workflow_myWorkflow, runId
@@ -693,9 +693,9 @@ The queue router (`queue/router.ts`) applies version-pinning:
    - `__wkf_workflow_*` → workflow handler URL
    - Other → webhook handler URL
 
-4. **Select target pod:** Query `workflow_queue_handlers` for the matching `deployment_version` and `application_id`. When multiple pods exist for the same version, the router picks one.
+4. **Select target endpoint:** Query `workflow_queue_handlers` for the matching `deployment_version` and `application_id`, deduplicate exact URLs for the queue type, and pick one URL.
 
-5. **Deliver** via HTTP POST to the target pod's registered queue handler endpoint.
+5. **Deliver** via HTTP POST to the selected queue handler endpoint. With ICC's current Service URLs, Kubernetes selects the receiving pod; the selected registration does not identify the executing pod.
 
 ### 8.3 Deferred Message Delivery
 
@@ -747,7 +747,7 @@ graph LR
 ```
 
 - **Deferred → Pending:** The leader executor promotes deferred messages when `deliver_at <= NOW()` (triggered by timer, not polling). Immediate messages (`delaySeconds == 0`) go directly to Pending.
-- **Pending → Dispatched:** The service routes the message to the correct pod and POSTs it.
+- **Pending → Dispatched:** The service routes the message to the correct deployment version's endpoint and POSTs it.
 - **Dispatched → Delivered:** The pod processes the message and returns 200.
 - **Dispatched → Retrying:** The pod returns an error or is unreachable. The service retries with exponential backoff (1s, 2s, 4s, 8s, up to 60s). Default max retries: 10.
 - **Retrying → Dead:** After exhausting retries, the message is moved to dead-letter status. Dead-lettered messages can be retried manually via `POST /dead-letters/:messageId/retry`.
@@ -1090,7 +1090,7 @@ This is essential because **apps typically run in their own namespaces** (e.g. `
 
 A ClusterIP Service must exist with the `app.kubernetes.io/name` label matching the pod. ICC uses this service to construct the dispatch URL. The service must expose the app port (default 3042).
 
-**The world client does NOT register handlers in K8s** — it detects the K8s environment via the service account token and skips registration in `start()`. This avoids creating duplicate handlers with conflicting URLs (one from ICC with FQDN, one from the world client with localhost). The dispatcher picks randomly among matching handlers, so a duplicate localhost entry would cause ~50% of cross-namespace dispatches to fail.
+**The world client does NOT register handlers in K8s** — it detects the K8s environment via the service account token and skips registration in `start()`. This avoids adding an unreachable localhost URL alongside ICC's Service URL. The router deduplicates exact URLs before selecting a destination, but distinct conflicting URLs remain independently selectable.
 
 ### 11.3 Draining Checks (Three-Phase Model)
 
@@ -1307,4 +1307,3 @@ For testing workflows with skew protection in a local K8s cluster, use the Desk 
 | Auth | N/A | Database user | Vercel tokens | **K8s service account token (multi-tenant) / none (single-tenant)** |
 | Quotas | N/A | N/A | Vercel limits | **Per-app configurable** |
 | Infrastructure | None | PostgreSQL | Vercel | **K8s + ICC + Workflow Service + PostgreSQL** |
-

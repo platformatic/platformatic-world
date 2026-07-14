@@ -277,4 +277,143 @@ describe('events', () => {
     const completed = JSON.parse(completeRes.body)
     assert.equal(completed.wait.status, 'completed')
   })
+
+  it('paginates run events in both directions without dropping the cursor', async () => {
+    const createRes = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+      payload: {
+        eventType: 'run_created',
+        specVersion: 2,
+        eventData: { deploymentId: 'v1.0.0', workflowName: 'pagination-test', input: {} },
+      },
+    })
+    const runId = JSON.parse(createRes.body).run.runId
+    const run = await ctx.app.pg.query('SELECT application_id FROM workflow_runs WHERE id = $1', [runId])
+    await ctx.app.pg.query(
+      `INSERT INTO workflow_events (run_id, application_id, event_type)
+       SELECT $1, $2, 'pagination_event' FROM generate_series(1, 4)
+       RETURNING id`,
+      [runId, run.rows[0].application_id]
+    )
+    const allEvents = await ctx.app.pg.query('SELECT id FROM workflow_events WHERE run_id = $1 ORDER BY id ASC', [runId])
+    const ids = allEvents.rows.map(row => String(row.id))
+    const baseUrl = `/api/v1/apps/${ctx.appId}/runs/${runId}/events`
+    const headers = { authorization: `Bearer ${ctx.apiKey}` }
+
+    const first = JSON.parse((await ctx.app.inject({ method: 'GET', url: `${baseUrl}?limit=3`, headers })).body)
+    assert.deepEqual(first.data.map((event: any) => event.eventId), ids.slice(0, 3))
+    assert.equal(first.cursor, ids[2])
+    assert.equal(first.hasMore, true)
+
+    const final = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `${baseUrl}?limit=3&cursor=${first.cursor}`,
+      headers,
+    })).body)
+    assert.deepEqual(final.data.map((event: any) => event.eventId), ids.slice(3))
+    assert.equal(final.cursor, ids.at(-1))
+    assert.equal(final.hasMore, false)
+
+    const empty = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `${baseUrl}?cursor=${final.cursor}`,
+      headers,
+    })).body)
+    assert.deepEqual(empty.data, [])
+    assert.equal(empty.cursor, final.cursor)
+
+    const later = await ctx.app.pg.query(
+      `INSERT INTO workflow_events (run_id, application_id, event_type)
+       VALUES ($1, $2, 'later_event') RETURNING id`,
+      [runId, run.rows[0].application_id]
+    )
+    const incremental = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `${baseUrl}?cursor=${final.cursor}`,
+      headers,
+    })).body)
+    assert.deepEqual(incremental.data.map((event: any) => event.eventId), [String(later.rows[0].id)])
+    assert.equal(incremental.cursor, String(later.rows[0].id))
+
+    const desc = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `${baseUrl}?limit=2&sortOrder=desc`,
+      headers,
+    })).body)
+    assert.deepEqual(desc.data.map((event: any) => event.eventId), [String(later.rows[0].id), ids.at(-1)])
+    assert.equal(desc.cursor, ids.at(-1))
+
+    const descNext = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `${baseUrl}?limit=2&sortOrder=desc&cursor=${desc.cursor}`,
+      headers,
+    })).body)
+    assert.deepEqual(descNext.data.map((event: any) => event.eventId), ids.slice(-3, -1).reverse())
+  })
+
+  it('paginates correlation events in both directions and preserves empty-page cursors', async () => {
+    const createRes = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+      payload: {
+        eventType: 'run_created',
+        specVersion: 2,
+        eventData: { deploymentId: 'v1.0.0', workflowName: 'correlation-pagination-test', input: {} },
+      },
+    })
+    const runId = JSON.parse(createRes.body).run.runId
+    const run = await ctx.app.pg.query('SELECT application_id FROM workflow_runs WHERE id = $1', [runId])
+    const correlationId = `pagination-${randomBytes(8).toString('hex')}`
+    const inserted = await ctx.app.pg.query(
+      `INSERT INTO workflow_events (run_id, application_id, event_type, correlation_id)
+       SELECT $1, $2, 'correlation_event', $3 FROM generate_series(1, 4)
+       RETURNING id`,
+      [runId, run.rows[0].application_id, correlationId]
+    )
+    const ids = inserted.rows.map(row => String(row.id))
+    const baseUrl = `/api/v1/apps/${ctx.appId}/events/by-correlation?correlationId=${correlationId}`
+    const headers = { authorization: `Bearer ${ctx.apiKey}` }
+
+    const first = JSON.parse((await ctx.app.inject({ method: 'GET', url: `${baseUrl}&limit=2`, headers })).body)
+    assert.deepEqual(first.data.map((event: any) => event.eventId), ids.slice(0, 2))
+    assert.equal(first.cursor, ids[1])
+    assert.equal(first.hasMore, true)
+
+    const final = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `${baseUrl}&limit=2&cursor=${first.cursor}`,
+      headers,
+    })).body)
+    assert.deepEqual(final.data.map((event: any) => event.eventId), ids.slice(2))
+    assert.equal(final.cursor, ids.at(-1))
+    assert.equal(final.hasMore, false)
+
+    const empty = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `${baseUrl}&cursor=${final.cursor}`,
+      headers,
+    })).body)
+    assert.deepEqual(empty.data, [])
+    assert.equal(empty.cursor, final.cursor)
+
+    const desc = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `${baseUrl}&limit=2&sortOrder=desc`,
+      headers,
+    })).body)
+    assert.deepEqual(desc.data.map((event: any) => event.eventId), ids.slice(-2).reverse())
+    assert.equal(desc.cursor, ids.at(-2))
+
+    const descFinal = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `${baseUrl}&limit=2&sortOrder=desc&cursor=${desc.cursor}`,
+      headers,
+    })).body)
+    assert.deepEqual(descFinal.data.map((event: any) => event.eventId), ids.slice(0, 2).reverse())
+    assert.equal(descFinal.cursor, ids[0])
+    assert.equal(descFinal.hasMore, false)
+  })
 })

@@ -5,6 +5,12 @@ export interface DispatchResult {
   success: boolean
   timeoutSeconds?: number
   statusCode: number
+  error?: DispatchError
+}
+
+export interface DispatchError {
+  code: string
+  message: string
 }
 
 export interface DispatchInput {
@@ -15,6 +21,32 @@ export interface DispatchInput {
   payloadBytes: Buffer | null
   payloadEncoding: 'json' | 'cbor'
   attempt: number
+}
+
+const ERROR_CODE_LIMIT = 64
+const ERROR_MESSAGE_LIMIT = 512
+
+function dispatchError (code: string, message: string): DispatchError {
+  return {
+    code: code.toUpperCase().replace(/[^A-Z0-9_]/g, '_').slice(0, ERROR_CODE_LIMIT) || 'DISPATCH_ERROR',
+    message: message.slice(0, ERROR_MESSAGE_LIMIT),
+  }
+}
+
+function requestError (err: unknown): DispatchError {
+  const code = typeof err === 'object' && err !== null && 'code' in err && typeof err.code === 'string'
+    ? err.code
+    : 'DISPATCH_ERROR'
+
+  switch (code) {
+    case 'UND_ERR_HEADERS_TIMEOUT': return dispatchError(code, 'Target response headers timed out')
+    case 'UND_ERR_BODY_TIMEOUT': return dispatchError(code, 'Target response body timed out')
+    case 'UND_ERR_CONNECT_TIMEOUT': return dispatchError(code, 'Target connection timed out')
+    case 'ECONNREFUSED': return dispatchError(code, 'Target connection was refused')
+    case 'ECONNRESET': return dispatchError(code, 'Target connection was reset')
+    case 'ENOTFOUND': return dispatchError(code, 'Target host was not found')
+    default: return dispatchError(code, 'Target request failed')
+  }
 }
 
 export async function dispatchMessage (input: DispatchInput): Promise<DispatchResult> {
@@ -77,8 +109,12 @@ export async function dispatchMessage (input: DispatchInput): Promise<DispatchRe
     }
 
     await response.body.dump()
-    return { success: false, statusCode }
-  } catch {
-    return { success: false, statusCode: 0 }
+    return {
+      success: false,
+      statusCode,
+      error: dispatchError(`HTTP_${statusCode}`, `Target returned HTTP ${statusCode}`),
+    }
+  } catch (err) {
+    return { success: false, statusCode: 0, error: requestError(err) }
   }
 }
