@@ -228,6 +228,30 @@ test('createQueueHandler accepts a namespaced prefix and rejects mismatched meta
   await world.close!()
 })
 
+test('createQueueHandler accepts a health check for the alternate endpoint', async () => {
+  const world = createPlatformaticWorld({
+    serviceUrl: 'http://localhost:9999',
+    appId: 'app',
+    deploymentVersion: 'v1'
+  })
+  let handled = false
+  const handler = world.createQueueHandler('__wkf_workflow_' as any, async () => {
+    handled = true
+  })
+  const response = await handler(new Request('http://localhost/flow', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      message: { __healthCheck: true, correlationId: 'health-check' },
+      meta: { queueName: '__wkf_step_health_check', messageId: 'm5', attempt: 1 }
+    })
+  }))
+
+  assert.equal(response.status, 200)
+  assert.equal(handled, true)
+  await world.close!()
+})
+
 test('world declares specVersion 4', () => {
   const world = createPlatformaticWorld({
     serviceUrl: 'http://localhost:9999',

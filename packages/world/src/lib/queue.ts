@@ -73,6 +73,9 @@ export function createQueue (client: HttpClient, config: QueueConfig) {
     if (!/^__(?:[a-z][a-z0-9]*_)?wkf_(?:workflow|step)_$/.test(prefix)) {
       throw new Error(`Invalid queue prefix: ${prefix}`)
     }
+    const alternatePrefix = prefix.endsWith('workflow_')
+      ? prefix.replace(/workflow_$/, 'step_')
+      : prefix.replace(/step_$/, 'workflow_')
 
     return async (req: Request): Promise<Response> => {
       const contentType = req.headers.get('content-type') || ''
@@ -92,7 +95,11 @@ export function createQueue (client: HttpClient, config: QueueConfig) {
       }
 
       const meta = body?.meta
-      if (!meta || typeof meta.queueName !== 'string' || !meta.queueName.startsWith(prefix) ||
+      const isHealthCheck = typeof body?.message === 'object' && body.message !== null &&
+        (body.message as { __healthCheck?: unknown }).__healthCheck === true
+      const prefixMatches = typeof meta?.queueName === 'string' &&
+        (meta.queueName.startsWith(prefix) || (isHealthCheck && meta.queueName === `${alternatePrefix}health_check`))
+      if (!meta || !prefixMatches ||
           !/^__(?:[a-z][a-z0-9]*_)?wkf_(?:workflow|step)_.+$/.test(meta.queueName) ||
           typeof meta.messageId !== 'string' || typeof meta.attempt !== 'number' || !Number.isFinite(meta.attempt)) {
         return Response.json({ error: 'Invalid queue message metadata' }, { status: 400 })
