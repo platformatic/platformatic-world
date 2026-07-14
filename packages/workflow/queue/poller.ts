@@ -1,5 +1,6 @@
 import pg from 'pg'
 import createLeaderElector from '@platformatic/leader'
+import { decode, encode } from 'cbor-x'
 import { routeMessage } from './router.ts'
 import { dispatchMessage, type DispatchResult } from './dispatcher.ts'
 import { getRetryDelay, isMaxAttempts } from './retry.ts'
@@ -21,6 +22,199 @@ const DEFERRED_CHANNEL = 'deferred_messages'
 // task (see processMessage), so a single slow/hung handler can no longer block
 // the poll loop; this cap just bounds concurrency and the in-flight set size.
 const MAX_INFLIGHT = 200
+
+interface FailureDetail {
+  code: string
+  message: string
+  at: string
+  attempt: number
+  statusCode?: number
+  target: {
+    queueName: string
+    deploymentVersion: string
+    url?: string
+  }
+}
+
+interface RegisteredTarget {
+  url: string
+}
+
+export function sanitizeTargetUrl (value: string): string | undefined {
+  try {
+    const url = new URL(value)
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    url.hash = ''
+    return url.toString().slice(0, 1024)
+  } catch {
+    return undefined
+  }
+}
+
+function failureDetail (
+  msg: any,
+  attempt: number,
+  code: string,
+  message: string,
+  target?: RegisteredTarget,
+  statusCode?: number
+): FailureDetail {
+  return {
+    code: code.slice(0, 64),
+    message: message.slice(0, 512),
+    at: new Date().toISOString(),
+    attempt,
+    ...(statusCode !== undefined ? { statusCode } : {}),
+    target: {
+      queueName: String(msg.queue_name).slice(0, 256),
+      deploymentVersion: String(msg.deployment_version).slice(0, 256),
+      ...(target?.url ? { url: sanitizeTargetUrl(target.url) } : {}),
+    },
+  }
+}
+
+function queuePayload (msg: any): any {
+  return msg.payload_encoding === 'cbor' ? decode(msg.payload_bytes) : msg.payload
+}
+
+// A valid v5 devalue payload containing a plain diagnostic object. Keeping the
+// user-facing error small avoids persisting transport response bodies or stacks.
+function terminalError (failure: FailureDetail): Buffer {
+  const value = [{ name: 1, message: 2, code: 3 }, 'QueueDeliveryError', failure.message, failure.code]
+  return Buffer.from(`devl${JSON.stringify(value)}`)
+}
+
+function eventError (error: Buffer): Buffer {
+  return Buffer.from(JSON.stringify({ error: error.toString('base64') }))
+}
+
+async function failRun (client: pg.PoolClient, msg: any, failure: FailureDetail): Promise<void> {
+  const error = terminalError(failure)
+  const failed = await client.query(
+    `UPDATE workflow_runs
+     SET status = 'failed', error = $3, completed_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND application_id = $2 AND status IN ('pending', 'running')
+     RETURNING id`,
+    [msg.run_id, msg.application_id, error]
+  )
+  if (failed.rows.length === 0) return
+
+  await client.query(
+    `UPDATE workflow_hooks SET status = 'disposed', disposed_at = NOW()
+     WHERE run_id = $1 AND application_id = $2 AND status != 'disposed'`,
+    [msg.run_id, msg.application_id]
+  )
+  await client.query(
+    `UPDATE workflow_waits SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+     WHERE run_id = $1 AND application_id = $2 AND status = 'waiting'`,
+    [msg.run_id, msg.application_id]
+  )
+  await client.query(
+    `INSERT INTO workflow_events (run_id, application_id, event_type, event_data)
+     SELECT $1::varchar, $2::integer, 'run_failed', $3
+     WHERE NOT EXISTS (
+       SELECT 1 FROM workflow_events
+       WHERE run_id = $1 AND application_id = $2 AND event_type = 'run_failed'
+     )`,
+    [msg.run_id, msg.application_id, eventError(error)]
+  )
+}
+
+async function ensureRunForWorkflowDelivery (client: pg.PoolClient, msg: any): Promise<void> {
+  if (!msg.run_id) return
+  let payload
+  try {
+    payload = queuePayload(msg)
+  } catch {}
+  const runInput = payload?.runInput
+  const workflowName = typeof runInput?.workflowName === 'string'
+    ? runInput.workflowName
+    : msg.queue_name.slice('__wkf_workflow_'.length)
+  const deploymentId = typeof runInput?.deploymentId === 'string'
+    ? runInput.deploymentId
+    : msg.deployment_version
+
+  await client.query(
+    `INSERT INTO workflow_runs
+       (id, application_id, workflow_name, deployment_id, status, execution_context, spec_version)
+     VALUES ($1, $2, $3, $4, 'pending', $5, $6)
+     ON CONFLICT (id) DO NOTHING`,
+    [msg.run_id, msg.application_id, workflowName || 'unknown', deploymentId || 'unknown',
+      runInput?.executionContext || null, runInput?.specVersion || null]
+  )
+}
+
+async function failBackgroundStep (client: pg.PoolClient, msg: any, failure: FailureDetail): Promise<boolean> {
+  let payload
+  try {
+    payload = queuePayload(msg)
+  } catch {
+    return false
+  }
+  if (!payload || typeof payload.stepId !== 'string') return false
+
+  const step = await client.query(
+    `SELECT s.id, s.status, r.workflow_name
+     FROM workflow_steps s
+     JOIN workflow_runs r ON r.id = s.run_id AND r.application_id = s.application_id
+     WHERE s.run_id = $1 AND s.application_id = $2 AND s.correlation_id = $3
+     FOR UPDATE OF s`,
+    [msg.run_id, msg.application_id, payload.stepId]
+  )
+  // A valid background-step payload must never directly fail the whole run.
+  // A missing/terminal step means another path already resolved its state.
+  if (step.rows.length === 0 || ['completed', 'failed', 'cancelled'].includes(step.rows[0].status)) return true
+
+  const error = terminalError(failure)
+  await client.query(
+    `UPDATE workflow_steps
+     SET status = 'failed', error = $3, completed_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND application_id = $2`,
+    [step.rows[0].id, msg.application_id, error]
+  )
+  await client.query(
+    `INSERT INTO workflow_events
+       (run_id, application_id, event_type, correlation_id, event_data)
+     VALUES ($1, $2, 'step_failed', $3, $4)`,
+    [msg.run_id, msg.application_id, payload.stepId, eventError(error)]
+  )
+
+  const continuation = { runId: msg.run_id }
+  const payloadJson = msg.payload_encoding === 'json' ? JSON.stringify(continuation) : null
+  const payloadBytes = msg.payload_encoding === 'cbor' ? Buffer.from(encode(continuation)) : null
+  await client.query(
+    `INSERT INTO workflow_queue_messages
+       (queue_name, run_id, deployment_version, application_id,
+        payload, payload_bytes, payload_encoding, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
+    [`__wkf_workflow_${step.rows[0].workflow_name}`, msg.run_id, msg.deployment_version,
+      msg.application_id, payloadJson, payloadBytes, msg.payload_encoding]
+  )
+  await client.query("SELECT pg_notify('deferred_messages', '{}')")
+  return true
+}
+
+async function finalizeFailure (client: pg.PoolClient, msg: any, failure: FailureDetail): Promise<void> {
+  // v5 dispatches background steps through the workflow queue, while v4 uses
+  // a dedicated step queue. The payload is the authoritative discriminator.
+  if (await failBackgroundStep(client, msg, failure)) return
+  if (msg.queue_name.startsWith('__wkf_workflow_')) {
+    await failRun(client, msg, failure)
+  } else if (msg.queue_name.startsWith('__wkf_step_')) {
+    await failRun(client, msg, failure)
+  }
+}
+
+async function lockRunForFailureFinalization (client: pg.PoolClient, msg: any): Promise<void> {
+  if (!msg.run_id) return
+  if (msg.queue_name.startsWith('__wkf_workflow_')) await ensureRunForWorkflowDelivery(client, msg)
+  await client.query(
+    'SELECT id FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
+    [msg.run_id, msg.application_id]
+  )
+}
 
 export function createPoller (pool: pg.Pool, connectionString: string, log: any) {
   let stopped = false
@@ -124,21 +318,32 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   async function executeOnce (): Promise<void> {
     const client = await pool.connect()
     try {
-      // 1. Promote deferred messages that are due
+      // 1. Finalize failures for rows left at the retry ceiling by older pollers.
+      const exhausted = await client.query(
+        `SELECT * FROM workflow_queue_messages
+         WHERE status = 'failed' AND attempts >= 10
+         ORDER BY created_at ASC
+         LIMIT 100`
+      )
+      for (const msg of exhausted.rows) {
+        await handleExhaustedMessage(client, msg)
+      }
+
+      // 2. Promote deferred messages that are due
       await client.query(
         `UPDATE workflow_queue_messages
-         SET status = 'pending'
+         SET status = 'pending', updated_at = NOW()
          WHERE status = 'deferred' AND deliver_at <= NOW()`
       )
 
-      // 2. Retry failed messages that are due
+      // 3. Retry failed messages that are due
       await client.query(
         `UPDATE workflow_queue_messages
-         SET status = 'pending'
+         SET status = 'pending', updated_at = NOW()
          WHERE status = 'failed' AND next_retry_at <= NOW() AND attempts < 10`
       )
 
-      // 3. Claim pending messages (excluding those already in flight) and
+      // 4. Claim pending messages (excluding those already in flight) and
       // dispatch each in its own task. We do NOT await the dispatches here:
       // a single slow or hung handler must not block the poll loop (the
       // single-flight `executing` guard would otherwise freeze the whole queue
@@ -163,7 +368,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
         }
       }
 
-      // 4. Schedule next wake-up based on earliest deferred/retry message
+      // 5. Schedule next wake-up based on earliest deferred/retry message
       // Fire-and-forget: must not block executeOnce so pendingNotify re-runs
       // are not delayed, and so re-runs use their own pool connection for the query
       scheduleNextWakeup()
@@ -200,7 +405,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       log.info(`[POLLER] dispatched msgId=${msg.id} queue=${msg.queue_name} encoding=${msg.payload_encoding} status=${result.statusCode} timeoutSeconds=${result.timeoutSeconds} success=${result.success}`)
 
       const client = await pool.connect()
-      try { await handleDispatchResult(client, msg, result) } finally { client.release() }
+      try { await handleDispatchResult(client, msg, result, route) } finally { client.release() }
     } catch (err) {
       // Leave the message 'pending'; removing it from inFlight (below) lets the
       // next poll retry it.
@@ -229,16 +434,24 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       )
 
       for (const orphan of orphans.rows) {
-        await client.query(
-          `UPDATE workflow_runs SET status = 'failed', error = $2, completed_at = NOW(), updated_at = NOW()
-           WHERE id = $1`,
-          [orphan.id, JSON.stringify({ message: 'Run orphaned: no activity for 15 minutes', code: 'ORPHANED' })]
-        )
-        await client.query(
-          `INSERT INTO workflow_events (run_id, application_id, event_type, event_data)
-           VALUES ($1, $2, 'run_failed', NULL)`,
-          [orphan.id, orphan.application_id]
-        )
+        await client.query('BEGIN')
+        try {
+          await client.query(
+            'SELECT id FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
+            [orphan.id, orphan.application_id]
+          )
+          const msg = {
+            run_id: orphan.id,
+            application_id: orphan.application_id,
+            queue_name: '__wkf_workflow_orphaned',
+            deployment_version: orphan.deployment_id,
+          }
+          await failRun(client, msg, failureDetail(msg, 0, 'ORPHANED', 'Run orphaned: no activity for 15 minutes'))
+          await client.query('COMMIT')
+        } catch (err) {
+          await client.query('ROLLBACK')
+          throw err
+        }
       }
     } catch (err) {
       log.error({ err }, 'Orphan check error')
@@ -279,80 +492,6 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     }
   }
 
-  async function handleNoRoute (client: pg.PoolClient, msg: any): Promise<void> {
-    if (isMaxAttempts(msg.attempts)) {
-      await client.query(
-        `UPDATE workflow_queue_messages SET status = 'dead', updated_at = NOW()
-         WHERE id = $1`,
-        [msg.id]
-      )
-    } else {
-      const delay = getRetryDelay(msg.attempts)
-      await client.query(
-        `UPDATE workflow_queue_messages
-         SET status = 'failed', attempts = attempts + 1,
-             next_retry_at = NOW() + make_interval(secs => $2)
-         WHERE id = $1`,
-        [msg.id, delay / 1000]
-      )
-    }
-  }
-
-  async function handleDispatchResult (client: pg.PoolClient, msg: any, result: DispatchResult): Promise<void> {
-    if (result.success) {
-      // Re-enqueue preserves the original encoding so the next dispatch
-      // continues using the same Content-Type as the run's specVersion.
-      const payloadJson = msg.payload_encoding === 'json' ? JSON.stringify(msg.payload) : null
-      const payloadBytes = msg.payload_encoding === 'cbor' ? msg.payload_bytes : null
-
-      if (typeof result.timeoutSeconds === 'number' && result.timeoutSeconds > 0) {
-        const delaySecs = result.timeoutSeconds
-        await client.query(
-          `INSERT INTO workflow_queue_messages
-           (queue_name, run_id, deployment_version, application_id,
-            payload, payload_bytes, payload_encoding, status, deliver_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'deferred', NOW() + make_interval(secs => $8))`,
-          [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
-            payloadJson, payloadBytes, msg.payload_encoding, delaySecs]
-        )
-        await client.query("SELECT pg_notify('deferred_messages', '{}')")
-      } else if (typeof result.timeoutSeconds === 'number' && result.timeoutSeconds === 0) {
-        await client.query(
-          `INSERT INTO workflow_queue_messages
-           (queue_name, run_id, deployment_version, application_id,
-            payload, payload_bytes, payload_encoding, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-          [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
-            payloadJson, payloadBytes, msg.payload_encoding]
-        )
-        await client.query("SELECT pg_notify('deferred_messages', '{}')")
-      }
-      await client.query(
-        `UPDATE workflow_queue_messages SET status = 'delivered', delivered_at = NOW()
-         WHERE id = $1`,
-        [msg.id]
-      )
-    } else {
-      const attempts = msg.attempts + 1
-      if (isMaxAttempts(attempts)) {
-        await client.query(
-          `UPDATE workflow_queue_messages SET status = 'dead', attempts = $2
-           WHERE id = $1`,
-          [msg.id, attempts]
-        )
-      } else {
-        const delay = getRetryDelay(attempts)
-        await client.query(
-          `UPDATE workflow_queue_messages
-           SET status = 'failed', attempts = $2,
-               next_retry_at = NOW() + make_interval(secs => $3)
-           WHERE id = $1`,
-          [msg.id, attempts, delay / 1000]
-        )
-      }
-    }
-  }
-
   return {
     start () {
       stopped = false
@@ -364,5 +503,147 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       teardownListener()
       await leader.stop()
     },
+  }
+}
+
+export async function handleExhaustedMessage (client: pg.PoolClient, msg: any): Promise<void> {
+  const failure = msg.last_failure || failureDetail(
+    msg,
+    msg.attempts,
+    'RETRY_EXHAUSTED',
+    'Queue delivery exhausted all retry attempts'
+  )
+
+  await client.query('BEGIN')
+  try {
+    await lockRunForFailureFinalization(client, msg)
+    const updated = await client.query(
+      `UPDATE workflow_queue_messages
+       SET status = 'dead', last_failure = $4, dead_at = NOW(), failure_finalized_at = NOW(),
+           next_retry_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND application_id = $2 AND status = 'failed' AND attempts = $3
+       RETURNING id`,
+      [msg.id, msg.application_id, msg.attempts, failure]
+    )
+    if (updated.rows.length > 0) await finalizeFailure(client, msg, failure)
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  }
+}
+
+export async function handleNoRoute (client: pg.PoolClient, msg: any): Promise<void> {
+  const attempts = msg.attempts + 1
+  const failure = failureDetail(
+    msg,
+    attempts,
+    'ROUTE_NOT_FOUND',
+    'No registered target is available for this queue delivery'
+  )
+
+  await client.query('BEGIN')
+  try {
+    if (isMaxAttempts(attempts)) {
+      await lockRunForFailureFinalization(client, msg)
+      const updated = await client.query(
+        `UPDATE workflow_queue_messages
+         SET status = 'dead', attempts = $4, last_failure = $5, dead_at = NOW(),
+             failure_finalized_at = NOW(), next_retry_at = NULL, updated_at = NOW()
+         WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3
+         RETURNING id`,
+        [msg.id, msg.application_id, msg.attempts, attempts, failure]
+      )
+      if (updated.rows.length > 0) await finalizeFailure(client, msg, failure)
+    } else {
+      const delay = getRetryDelay(attempts)
+      await client.query(
+        `UPDATE workflow_queue_messages
+         SET status = 'failed', attempts = $4, last_failure = $5,
+             next_retry_at = NOW() + make_interval(secs => $6), updated_at = NOW()
+         WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3`,
+        [msg.id, msg.application_id, msg.attempts, attempts, failure, delay / 1000]
+      )
+    }
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  }
+}
+
+export async function handleDispatchResult (
+  client: pg.PoolClient,
+  msg: any,
+  result: DispatchResult,
+  target?: RegisteredTarget
+): Promise<void> {
+  await client.query('BEGIN')
+  try {
+    if (result.success) {
+      const delivered = await client.query(
+        `UPDATE workflow_queue_messages
+         SET status = 'delivered', delivered_at = NOW(), updated_at = NOW()
+         WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3
+         RETURNING id`,
+        [msg.id, msg.application_id, msg.attempts]
+      )
+
+      if (delivered.rows.length > 0 && typeof result.timeoutSeconds === 'number') {
+        const payloadJson = msg.payload_encoding === 'json' ? JSON.stringify(msg.payload) : null
+        const payloadBytes = msg.payload_encoding === 'cbor' ? msg.payload_bytes : null
+        if (result.timeoutSeconds > 0) {
+          await client.query(
+            `INSERT INTO workflow_queue_messages
+               (queue_name, run_id, deployment_version, application_id,
+                payload, payload_bytes, payload_encoding, status, deliver_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'deferred', NOW() + make_interval(secs => $8))`,
+            [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
+              payloadJson, payloadBytes, msg.payload_encoding, result.timeoutSeconds]
+          )
+          await client.query("SELECT pg_notify('deferred_messages', '{}')")
+        } else if (result.timeoutSeconds === 0) {
+          await client.query(
+            `INSERT INTO workflow_queue_messages
+               (queue_name, run_id, deployment_version, application_id,
+                payload, payload_bytes, payload_encoding, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
+            [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
+              payloadJson, payloadBytes, msg.payload_encoding]
+          )
+          await client.query("SELECT pg_notify('deferred_messages', '{}')")
+        }
+      }
+    } else {
+      const attempts = msg.attempts + 1
+      const error = result.error || { code: 'DISPATCH_ERROR', message: 'Target request failed' }
+      const failure = failureDetail(msg, attempts, error.code, error.message, target, result.statusCode)
+
+      if (isMaxAttempts(attempts)) {
+        await lockRunForFailureFinalization(client, msg)
+        const updated = await client.query(
+          `UPDATE workflow_queue_messages
+           SET status = 'dead', attempts = $4, last_failure = $5, dead_at = NOW(),
+               failure_finalized_at = NOW(), next_retry_at = NULL, updated_at = NOW()
+           WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3
+           RETURNING id`,
+          [msg.id, msg.application_id, msg.attempts, attempts, failure]
+        )
+        if (updated.rows.length > 0) await finalizeFailure(client, msg, failure)
+      } else {
+        const delay = getRetryDelay(attempts)
+        await client.query(
+          `UPDATE workflow_queue_messages
+           SET status = 'failed', attempts = $4, last_failure = $5,
+               next_retry_at = NOW() + make_interval(secs => $6), updated_at = NOW()
+           WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3`,
+          [msg.id, msg.application_id, msg.attempts, attempts, failure, delay / 1000]
+        )
+      }
+    }
+    await client.query('COMMIT')
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
   }
 }

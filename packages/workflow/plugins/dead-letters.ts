@@ -23,7 +23,8 @@ async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
     params.push(offset)
 
     const result = await app.pg.query(
-      `SELECT id, idempotency_key, queue_name, run_id, deployment_version, payload, attempts, created_at
+      `SELECT id, idempotency_key, queue_name, run_id, deployment_version, payload, attempts,
+              last_failure, dead_at, failure_finalized_at, created_at
        FROM workflow_queue_messages
        WHERE ${conditions.join(' AND ')}
        ORDER BY created_at DESC
@@ -40,6 +41,9 @@ async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
       deploymentVersion: row.deployment_version,
       payload: row.payload,
       attempts: row.attempts,
+      lastFailure: row.last_failure,
+      deadAt: row.dead_at,
+      failureFinalizedAt: row.failure_finalized_at,
       createdAt: row.created_at,
     }))
     const nextCursor = hasMore ? String(offset + limit) : null
@@ -55,19 +59,32 @@ async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
 
     if (isNaN(numericId)) throw new BadRequest('invalid messageId')
 
-    const result = await app.pg.query(
-      `UPDATE workflow_queue_messages
-       SET status = 'pending', attempts = 0, next_retry_at = NULL
-       WHERE id = $1 AND application_id = $2 AND status = 'dead'
-       RETURNING id`,
-      [numericId, appId]
-    )
+    const client = await app.pg.connect()
+    try {
+      await client.query('BEGIN')
+      const result = await client.query(
+        `UPDATE workflow_queue_messages
+         SET status = 'pending', attempts = 0, next_retry_at = NULL,
+             dead_at = NULL, updated_at = NOW()
+         WHERE id = $1 AND application_id = $2 AND status = 'dead'
+           AND failure_finalized_at IS NULL
+         RETURNING id`,
+        [numericId, appId]
+      )
 
-    if (result.rows.length === 0) {
-      throw new BadRequest('message not found or not in dead state')
+      if (result.rows.length === 0) {
+        throw new BadRequest('message not found, not dead, or failure already finalized')
+      }
+
+      await client.query("SELECT pg_notify('deferred_messages', '{}')")
+      await client.query('COMMIT')
+      return { retried: true, messageId: `msg_${numericId}` }
+    } catch (err) {
+      try { await client.query('ROLLBACK') } catch {}
+      throw err
+    } finally {
+      client.release()
     }
-
-    return { retried: true, messageId: `msg_${numericId}` }
   })
 }
 

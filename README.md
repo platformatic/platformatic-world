@@ -358,8 +358,10 @@ The queue router pins messages to deployment versions:
 
 1. Each message carries a `deployment_version` from the run that created it
 2. The router looks up registered handlers for that version
-3. Messages are dispatched via HTTP POST to the correct pod
+3. The router deduplicates exact endpoint URLs and selects one for HTTP dispatch
 4. If a version is expired, messages are rejected
+
+In Kubernetes, ICC currently registers Service URLs. The selected URL therefore pins execution to a deployment version, not to a specific pod; Kubernetes chooses the backend for the service connection.
 
 ### Deferred Delivery
 

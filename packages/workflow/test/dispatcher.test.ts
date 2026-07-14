@@ -103,4 +103,33 @@ describe('dispatcher', () => {
       await new Promise<void>((resolve) => timeoutServer.close(() => resolve()))
     }
   })
+
+  it('returns a bounded normalized HTTP error without the response body', async () => {
+    const errorServer = createServer((_req, res) => {
+      res.writeHead(503, { 'content-type': 'text/plain' })
+      res.end(`secret-${'x'.repeat(1000)}`)
+    })
+    await new Promise<void>((resolve) => errorServer.listen(0, resolve))
+    const p = (errorServer.address() as AddressInfo).port
+
+    try {
+      const result = await dispatchMessage({
+        url: `http://localhost:${p}/flow`,
+        queueName: '__wkf_workflow_test',
+        messageId: 4,
+        payload: { runId: 'r4' },
+        payloadBytes: null,
+        payloadEncoding: 'json',
+        attempt: 9,
+      })
+      assert.equal(result.success, false)
+      assert.equal(result.statusCode, 503)
+      assert.deepEqual(result.error, {
+        code: 'HTTP_503',
+        message: 'Target returned HTTP 503',
+      })
+    } finally {
+      await new Promise<void>((resolve) => errorServer.close(() => resolve()))
+    }
+  })
 })

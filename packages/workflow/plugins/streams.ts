@@ -62,6 +62,7 @@ async function streamsPlugin (app: FastifyInstance): Promise<void> {
       if (isDone) {
         hs.closed = true
       } else if (isMulti) {
+        if (hs.closed) throw new BadRequest('stream is already closed')
         const chunks = request.body as any[]
         if (!Array.isArray(chunks)) throw new BadRequest('body must be an array for multi-write')
         for (const chunk of chunks) {
@@ -69,6 +70,7 @@ async function streamsPlugin (app: FastifyInstance): Promise<void> {
           hs.chunks.push(data)
         }
       } else {
+        if (hs.closed) throw new BadRequest('stream is already closed')
         const body = request.body as any
         const data = typeof body === 'string'
           ? Buffer.from(body, 'utf-8')
@@ -83,67 +85,75 @@ async function streamsPlugin (app: FastifyInstance): Promise<void> {
       return
     }
 
-    if (isDone) {
-      await app.pg.query(
-        `INSERT INTO workflow_stream_chunks (stream_name, run_id, application_id, chunk_index, data, is_closed)
-         VALUES ($1, $2, $3, -1, $4, TRUE)
-         ON CONFLICT DO NOTHING`,
-        [name, runId, appId, Buffer.alloc(0)]
+    const chunks = isMulti ? request.body as any[] : null
+    if (isMulti && !Array.isArray(chunks)) throw new BadRequest('body must be an array for multi-write')
+
+    const client = await app.pg.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query(
+        `SELECT pg_advisory_xact_lock(
+           hashtextextended(json_build_array($1::integer, $2::text, $3::text)::text, 0)
+         )`,
+        [appId, runId, name]
       )
-      await notifyStream(name)
-      reply.code(204)
-      return
-    }
 
-    if (isMulti) {
-      const chunks = request.body as any[]
-      if (!Array.isArray(chunks)) throw new BadRequest('body must be an array for multi-write')
-
-      const maxResult = await app.pg.query(
-        `SELECT COALESCE(MAX(chunk_index), -1) as max_idx FROM workflow_stream_chunks
-         WHERE stream_name = $1 AND run_id = $2 AND application_id = $3 AND is_closed = FALSE`,
+      const closedResult = await client.query(
+        `SELECT 1 FROM workflow_stream_chunks
+         WHERE stream_name = $1 AND run_id = $2 AND application_id = $3 AND is_closed = TRUE
+         LIMIT 1`,
         [name, runId, appId]
       )
-      let idx = maxResult.rows[0].max_idx + 1
 
-      const client = await app.pg.connect()
-      try {
-        await client.query('BEGIN')
-        for (const chunk of chunks) {
-          const data = typeof chunk === 'string' ? Buffer.from(chunk, 'utf-8') : Buffer.from(chunk.data || chunk, 'base64')
+      if (isDone) {
+        if (closedResult.rows.length === 0) {
+          await client.query(
+            `INSERT INTO workflow_stream_chunks (stream_name, run_id, application_id, chunk_index, data, is_closed)
+             VALUES ($1, $2, $3, -1, $4, TRUE)`,
+            [name, runId, appId, Buffer.alloc(0)]
+          )
+        }
+      } else {
+        if (closedResult.rows.length > 0) throw new BadRequest('stream is already closed')
+
+        const maxResult = await client.query(
+          `SELECT COALESCE(MAX(chunk_index), -1) AS max_idx FROM workflow_stream_chunks
+           WHERE stream_name = $1 AND run_id = $2 AND application_id = $3 AND is_closed = FALSE`,
+          [name, runId, appId]
+        )
+        let idx = maxResult.rows[0].max_idx + 1
+
+        if (chunks) {
+          for (const chunk of chunks) {
+            const data = typeof chunk === 'string' ? Buffer.from(chunk, 'utf-8') : Buffer.from(chunk.data || chunk, 'base64')
+            await client.query(
+              `INSERT INTO workflow_stream_chunks (stream_name, run_id, application_id, chunk_index, data)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [name, runId, appId, idx++, data]
+            )
+          }
+        } else {
+          const body = request.body as any
+          const data = typeof body === 'string'
+            ? Buffer.from(body, 'utf-8')
+            : Buffer.isBuffer(body)
+              ? body
+              : Buffer.from(body.data || JSON.stringify(body), 'base64')
+
           await client.query(
             `INSERT INTO workflow_stream_chunks (stream_name, run_id, application_id, chunk_index, data)
              VALUES ($1, $2, $3, $4, $5)`,
-            [name, runId, appId, idx++, data]
+            [name, runId, appId, idx, data]
           )
         }
-        await client.query('COMMIT')
-      } catch (err) {
-        await client.query('ROLLBACK')
-        throw err
-      } finally {
-        client.release()
       }
-    } else {
-      const body = request.body as any
-      const data = typeof body === 'string'
-        ? Buffer.from(body, 'utf-8')
-        : Buffer.isBuffer(body)
-          ? body
-          : Buffer.from(body.data || JSON.stringify(body), 'base64')
 
-      const maxResult = await app.pg.query(
-        `SELECT COALESCE(MAX(chunk_index), -1) as max_idx FROM workflow_stream_chunks
-         WHERE stream_name = $1 AND run_id = $2 AND application_id = $3 AND is_closed = FALSE`,
-        [name, runId, appId]
-      )
-      const idx = maxResult.rows[0].max_idx + 1
-
-      await app.pg.query(
-        `INSERT INTO workflow_stream_chunks (stream_name, run_id, application_id, chunk_index, data)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [name, runId, appId, idx, data]
-      )
+      await client.query('COMMIT')
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
     }
 
     await notifyStream(name)
@@ -205,17 +215,27 @@ async function streamsPlugin (app: FastifyInstance): Promise<void> {
       }
 
       let nextIndex = startIndex
-      let done = false
 
-      async function flush (): Promise<void> {
+      async function flush (): Promise<boolean> {
         const result = await app.pg.query(
-          `SELECT data, chunk_index FROM workflow_stream_chunks
-           WHERE stream_name = $1 AND application_id = $2 AND chunk_index >= $3 AND is_closed = FALSE
-           ORDER BY chunk_index ASC`,
+          `WITH stream_state AS (
+             SELECT EXISTS (
+               SELECT 1 FROM workflow_stream_chunks
+               WHERE stream_name = $1 AND application_id = $2 AND is_closed = TRUE
+             ) AS is_closed
+           ), chunks AS (
+             SELECT data, chunk_index FROM workflow_stream_chunks
+             WHERE stream_name = $1 AND application_id = $2 AND chunk_index >= $3 AND is_closed = FALSE
+           )
+           SELECT chunks.data, chunks.chunk_index, stream_state.is_closed
+           FROM stream_state
+           LEFT JOIN chunks ON TRUE
+           ORDER BY chunks.chunk_index ASC NULLS LAST`,
           [name, appId, nextIndex]
         )
 
         for (const row of result.rows) {
+          if (row.chunk_index === null) continue
           const buf = row.data as Buffer
           if (buf.byteLength > 0) {
             reply.raw.write(buf)
@@ -223,41 +243,58 @@ async function streamsPlugin (app: FastifyInstance): Promise<void> {
           nextIndex = row.chunk_index + 1
         }
 
-        const closedResult = await app.pg.query(
-          `SELECT 1 FROM workflow_stream_chunks
-           WHERE stream_name = $1 AND application_id = $2 AND is_closed = TRUE
-           LIMIT 1`,
-          [name, appId]
-        )
-
-        if (closedResult.rows.length > 0) {
-          done = true
+        const done = result.rows[0].is_closed as boolean
+        if (done) {
           reply.raw.end()
         }
+        return done
       }
 
-      // Flush any existing chunks first
-      await flush()
-      if (done) return reply
-
-      // Wait for NOTIFY events to flush new chunks
       return new Promise((resolve) => {
-        const onUpdate = async () => {
-          if (done) return
-          await flush()
-          if (done) {
-            streamEvents.removeListener(name, onUpdate)
-            resolve(reply)
-          }
-        }
-        streamEvents.on(name, onUpdate)
+        let done = false
+        let flushing = false
+        let pending = false
 
-        // Clean up if client disconnects
-        request.raw.on('close', () => {
+        function cleanup (): void {
+          if (done) return
           done = true
           streamEvents.removeListener(name, onUpdate)
+          request.raw.removeListener('close', onClose)
           resolve(reply)
-        })
+        }
+
+        function onClose (): void {
+          cleanup()
+        }
+
+        function onUpdate (): void {
+          if (done) return
+          if (flushing) {
+            pending = true
+            return
+          }
+
+          flushing = true
+          const drain = async () => {
+            do {
+              pending = false
+              if (await flush()) cleanup()
+            } while (pending && !done)
+          }
+          const finish = () => {
+            flushing = false
+            if (pending && !done) onUpdate()
+          }
+          drain().then(finish, err => {
+            cleanup()
+            reply.raw.destroy(err as Error)
+            finish()
+          })
+        }
+
+        streamEvents.on(name, onUpdate)
+        request.raw.on('close', onClose)
+        onUpdate()
       })
     }
 

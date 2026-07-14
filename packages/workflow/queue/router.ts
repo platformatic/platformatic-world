@@ -2,7 +2,6 @@ import type pg from 'pg'
 
 export interface RouteResult {
   url: string
-  podId: string
 }
 
 export async function routeMessage (
@@ -22,28 +21,21 @@ export async function routeMessage (
     return null // Version expired
   }
 
-  // Find registered handlers for this version
-  const handlers = await pool.query(
-    `SELECT pod_id, workflow_url, step_url, webhook_url FROM workflow_queue_handlers
+  // Find registered destinations for this version.
+  const registrations = await pool.query(
+    `SELECT workflow_url, step_url, webhook_url FROM workflow_queue_handlers
      WHERE application_id = $1 AND deployment_version = $2
      ORDER BY last_heartbeat DESC`,
     [appId, deploymentVersion]
   )
 
-  if (handlers.rows.length === 0) return null
+  if (registrations.rows.length === 0) return null
 
-  // Round-robin: pick based on a simple random selection
-  const handler = handlers.rows[Math.floor(Math.random() * handlers.rows.length)]
+  const urlField = queueName.startsWith('__wkf_step_')
+    ? 'step_url'
+    : queueName.startsWith('__wkf_workflow_') ? 'workflow_url' : 'webhook_url'
+  const urls = [...new Set(registrations.rows.map(registration => registration[urlField]))]
+  const url = urls[Math.floor(Math.random() * urls.length)]
 
-  // Determine target URL based on queue name
-  let url: string
-  if (queueName.startsWith('__wkf_step_')) {
-    url = handler.step_url
-  } else if (queueName.startsWith('__wkf_workflow_')) {
-    url = handler.workflow_url
-  } else {
-    url = handler.webhook_url
-  }
-
-  return { url, podId: handler.pod_id }
+  return { url }
 }
