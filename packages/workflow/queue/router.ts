@@ -31,9 +31,10 @@ export async function routeMessage (
 
   if (registrations.rows.length === 0) return null
 
-  const urlField = queueName.startsWith('__wkf_step_')
+  const queueMatch = queueName.match(/^__(?:[a-z][a-z0-9]*_)?wkf_(workflow|step)_.+$/)
+  const urlField = queueMatch?.[1] === 'step'
     ? 'step_url'
-    : queueName.startsWith('__wkf_workflow_') ? 'workflow_url' : 'webhook_url'
+    : queueMatch?.[1] === 'workflow' ? 'workflow_url' : 'webhook_url'
   const urls = [...new Set(registrations.rows.map(registration => registration[urlField]))]
   const url = urls[Math.floor(Math.random() * urls.length)]
 

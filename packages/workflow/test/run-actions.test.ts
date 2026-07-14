@@ -113,6 +113,29 @@ describe('run-actions', () => {
     assert.equal(messages.rows[0].status, 'pending')
   })
 
+  it('should preserve a namespaced workflow queue when replaying', async () => {
+    const run = await createRun('v1', 'namespaced-replay')
+    await startRun(run.runId)
+    await completeRun(run.runId)
+    const app = await ctx.app.pg.query('SELECT id FROM workflow_applications WHERE app_id = $1', [ctx.appId])
+    await ctx.app.pg.query(
+      `INSERT INTO workflow_queue_messages
+       (queue_name, run_id, deployment_version, application_id, payload, status)
+       VALUES ($1, $2, 'v1', $3, '{}', 'completed')`,
+      ['__tenant1_wkf_workflow_namespaced-replay', run.runId, app.rows[0].id]
+    )
+
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${run.runId}/replay`,
+      payload: {}
+    })
+    assert.equal(response.statusCode, 200)
+    const replayed = JSON.parse(response.body)
+    const messages = await ctx.app.pg.query('SELECT queue_name FROM workflow_queue_messages WHERE run_id = $1', [replayed.runId])
+    assert.equal(messages.rows[0].queue_name, '__tenant1_wkf_workflow_namespaced-replay')
+  })
+
   it('should return 404 for non-existent run', async () => {
     const response = await ctx.app.inject({
       method: 'POST',
@@ -176,5 +199,37 @@ describe('run-actions', () => {
     assert.equal(response.statusCode, 200)
     const body = JSON.parse(response.body)
     assert.equal(body.stoppedCount, 1)
+  })
+
+  it('should promote namespaced workflow and step queues on wake-up', async () => {
+    const run = await createRun('v1', 'namespaced-wake-up')
+    await startRun(run.runId)
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${run.runId}/events`,
+      payload: {
+        eventType: 'wait_created',
+        correlationId: 'sleep-namespaced',
+        specVersion: 3,
+        eventData: { resumeAt: new Date(Date.now() + 60000).toISOString() }
+      }
+    })
+    const app = await ctx.app.pg.query('SELECT id FROM workflow_applications WHERE app_id = $1', [ctx.appId])
+    await ctx.app.pg.query(
+      `INSERT INTO workflow_queue_messages
+       (queue_name, run_id, deployment_version, application_id, payload, status, deliver_at)
+       VALUES ($1, $2, 'v1', $3, '{}', 'deferred', NOW() + INTERVAL '1 minute')`,
+      ['__tenant1_wkf_workflow_namespaced-wake-up', run.runId, app.rows[0].id]
+    )
+
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${run.runId}/wake-up`,
+      payload: {}
+    })
+    assert.equal(response.statusCode, 200)
+    const message = await ctx.app.pg.query('SELECT status, deliver_at FROM workflow_queue_messages WHERE run_id = $1', [run.runId])
+    assert.equal(message.rows[0].status, 'pending')
+    assert.equal(message.rows[0].deliver_at, null)
   })
 })

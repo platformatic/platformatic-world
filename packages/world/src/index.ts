@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getSharedContext } from '@platformatic/globals'
 import type { World } from '@workflow/world'
-import { SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT } from '@workflow/world'
 import { HttpClient } from './lib/client.ts'
 import type { ClientConfig } from './lib/client.ts'
 import { createStorage } from './lib/storage.ts'
@@ -13,11 +12,13 @@ import { createEncryption } from './lib/encryption.ts'
 
 export interface PlatformaticWorldConfig extends ClientConfig, QueueConfig {}
 
+const SPEC_VERSION_SUPPORTS_ATTRIBUTES = 4
+
 export function createPlatformaticWorld (config: PlatformaticWorldConfig): World {
   const client = new HttpClient(config)
 
   return {
-    specVersion: SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT,
+    specVersion: SPEC_VERSION_SUPPORTS_ATTRIBUTES,
     ...createStorage(client),
     ...createQueue(client, config),
     ...createStreamer(client),
@@ -100,7 +101,12 @@ export function createWorld (options?: Partial<CreateWorldOptions>): World {
     throw new Error('PLT_WORLD_SERVICE_URL environment variable is required')
   }
 
-  const appId = options?.appId || process.env.PLT_WORLD_APP_ID || readAppName()
+  const runningInK8s = isRunningInK8s()
+  const explicitAppId = options?.appId || process.env.PLT_WORLD_APP_ID
+  if (runningInK8s && !explicitAppId) {
+    throw new Error('World application ID is required in Kubernetes; set options.appId or PLT_WORLD_APP_ID')
+  }
+  const appId = explicitAppId || readAppName()
   const explicitVersion = options?.deploymentVersion ||
     process.env.PLT_WORLD_DEPLOYMENT_VERSION ||
     process.env.PLT_DEPLOYMENT_VERSION
@@ -112,7 +118,7 @@ export function createWorld (options?: Partial<CreateWorldOptions>): World {
     deploymentVersion: explicitVersion || 'local',
     // In K8s ICC assigns the version, so a 'local' stamp means "not resolved yet" and
     // must not be used to enqueue (see queue.ts). Standalone/local dev keeps 'local'.
-    requireResolvedVersion: isRunningInK8s(),
+    requireResolvedVersion: runningInK8s,
   }
 
   // No explicit version: start at 'local'. When running inside a watt runtime, the

@@ -5,6 +5,71 @@ import { RunNotFound, BadRequest } from '../lib/errors.ts'
 import { checkRunQuota, checkEventQuota } from '../lib/quotas.ts'
 import type pg from 'pg'
 
+const ATTRIBUTE_KEY_MAX_LENGTH = 256
+const ATTRIBUTE_VALUE_MAX_BYTES = 256
+const ATTRIBUTE_MAX_PER_RUN = 64
+
+function validateAttribute (key: string, value: string, allowReservedAttributes: boolean): void {
+  if (key.length === 0) throw new BadRequest('attribute key must not be empty')
+  if (key.length > ATTRIBUTE_KEY_MAX_LENGTH) throw new BadRequest(`attribute key length exceeds limit ${ATTRIBUTE_KEY_MAX_LENGTH}`)
+  if (!allowReservedAttributes && key.startsWith('$')) throw new BadRequest(`attribute key ${JSON.stringify(key)} uses reserved prefix "$"`)
+  if (Buffer.byteLength(value, 'utf8') > ATTRIBUTE_VALUE_MAX_BYTES) {
+    throw new BadRequest(`attribute value byte length exceeds limit ${ATTRIBUTE_VALUE_MAX_BYTES}`)
+  }
+}
+
+function validateAttributes (attributes: unknown, allowReservedAttributes: boolean): Record<string, string> {
+  if (attributes === undefined) return {}
+  if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) {
+    throw new BadRequest('attributes must be an object')
+  }
+
+  const entries = Object.entries(attributes)
+  if (entries.length > ATTRIBUTE_MAX_PER_RUN) {
+    throw new BadRequest(`run attribute count would exceed limit ${ATTRIBUTE_MAX_PER_RUN}`)
+  }
+  for (const [key, value] of entries) {
+    if (typeof value !== 'string') throw new BadRequest('attribute value must be a string')
+    validateAttribute(key, value, allowReservedAttributes)
+  }
+  return Object.fromEntries(entries)
+}
+
+function applyAttributeChanges (existing: Record<string, string>, eventData: any): Record<string, string> {
+  const changes = eventData?.changes
+  if (!Array.isArray(changes)) throw new BadRequest('attribute changes must be an array')
+  if (changes.length === 0) throw new BadRequest('attribute changes must not be empty')
+  const writer = eventData?.writer
+  if (!writer || typeof writer !== 'object' || Array.isArray(writer)) throw new BadRequest('attribute writer must be workflow or step')
+  if (writer.type === 'workflow') {
+    if (Object.keys(writer).length !== 1) throw new BadRequest('workflow attribute writer only accepts type')
+  } else if (writer.type === 'step') {
+    if (Object.keys(writer).some(key => !['type', 'stepId', 'attempt'].includes(key)) ||
+        typeof writer.stepId !== 'string' || writer.stepId.length === 0 ||
+        !Number.isInteger(writer.attempt) || writer.attempt < 1) {
+      throw new BadRequest('step attribute writer requires a nonempty stepId and positive integer attempt')
+    }
+  } else {
+    throw new BadRequest('attribute writer must be workflow or step')
+  }
+
+  const seen = new Set<string>()
+  const next = { ...existing }
+  for (const change of changes) {
+    if (!change || typeof change !== 'object' || Array.isArray(change) || typeof change.key !== 'string' ||
+        (typeof change.value !== 'string' && change.value !== null)) {
+      throw new BadRequest('attribute changes require a string key and string or null value')
+    }
+    if (seen.has(change.key)) throw new BadRequest(`attribute key ${JSON.stringify(change.key)} appears more than once`)
+    seen.add(change.key)
+    validateAttribute(change.key, change.value === null ? '' : change.value, eventData.allowReservedAttributes === true)
+    if (change.value === null) delete next[change.key]
+    else next[change.key] = change.value
+  }
+  // Existing reserved keys remain valid; reservation policy applies only to changed keys.
+  return validateAttributes(next, true)
+}
+
 // Encode data as binary for storage. Supports both Uint8Array (base64) and JSON.
 function encodeData (data: unknown): Buffer | null {
   if (data === undefined || data === null) return null
@@ -45,6 +110,8 @@ function formatEvent (row: any, resolveData?: string) {
   if (row.correlation_id) event.correlationId = row.correlation_id
   if (resolveData !== 'none' && row.event_data) {
     event.eventData = decodeData(row.event_data)
+  } else if (resolveData === 'none' && row.event_type === 'attr_set' && row.event_data) {
+    event.eventData = decodeData(row.event_data)
   }
   return event
 }
@@ -58,6 +125,7 @@ function formatRun (row: any, resolveData?: string) {
     specVersion: row.spec_version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    attributes: row.attributes || {},
   }
   if (resolveData !== 'none') {
     run.input = decodeData(row.input)
@@ -232,6 +300,10 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           const runId = rawRunId === 'null' ? randomUUID() : rawRunId
           const eventData = body.eventData || {}
           const input = encodeData(eventData.input)
+          if (eventData.attributes !== undefined && (!Number.isInteger(body.specVersion) || body.specVersion < 4)) {
+            throw new BadRequest('initial attributes require specVersion 4 or newer')
+          }
+          const attributes = validateAttributes(eventData.attributes, eventData.allowReservedAttributes === true)
 
           // Idempotent: the SDK retries this endpoint on transient errors
           // (network blip, timeout, 5xx). A duplicate POST for the same runId
@@ -239,11 +311,11 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           // existing run state instead. Mirrors the run_started handler's
           // existence-check pattern, just via an atomic upsert.
           const inserted = await client.query(
-            `INSERT INTO workflow_runs (id, application_id, workflow_name, deployment_id, status, input, execution_context, spec_version)
-             VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7)
+            `INSERT INTO workflow_runs (id, application_id, workflow_name, deployment_id, status, input, execution_context, spec_version, attributes)
+             VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8)
              ON CONFLICT (id) DO NOTHING
              RETURNING id`,
-            [runId, appId, eventData.workflowName, eventData.deploymentId, input, eventData.executionContext || null, body.specVersion || null]
+            [runId, appId, eventData.workflowName, eventData.deploymentId, input, eventData.executionContext || null, body.specVersion || null, attributes]
           )
 
           // Only emit the run_created event row when we actually created the
@@ -290,14 +362,23 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
               throw new RunNotFound(rawRunId)
             }
             const input = eventData.input ? encodeData(eventData.input) : null
+            if (eventData.attributes !== undefined && (!Number.isInteger(body.specVersion) || body.specVersion < 4)) {
+              throw new BadRequest('initial attributes require specVersion 4 or newer')
+            }
+            const attributes = validateAttributes(eventData.attributes, eventData.allowReservedAttributes === true)
             await client.query(
               `INSERT INTO workflow_runs
                  (id, application_id, workflow_name, deployment_id, status,
-                  input, execution_context, spec_version, started_at)
-               VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, NOW())`,
+                   input, execution_context, spec_version, started_at, attributes)
+               VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, NOW(), $8)`,
               [rawRunId, appId, eventData.workflowName, eventData.deploymentId,
-                input, eventData.executionContext || null, body.specVersion || null]
+                input, eventData.executionContext || null, body.specVersion || null, attributes]
             )
+
+            await insertEvent(client, rawRunId, appId, {
+              ...body,
+              eventType: 'run_created'
+            })
           }
 
           // Dedupe run_started: exactly one event per run in the log, otherwise
@@ -324,6 +405,43 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
           if (!runRow) throw new RunNotFound(rawRunId)
           result = { event: eventRow ? formatEvent(eventRow, resolveData) : null, run: formatRun(runRow, resolveData) }
+          break
+        }
+
+        case 'attr_set': {
+          const runResult = await client.query(
+            'SELECT * FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
+            [rawRunId, appId]
+          )
+          if (runResult.rows.length === 0) throw new RunNotFound(rawRunId)
+          if (!Number.isInteger(body.specVersion) || body.specVersion < 4 ||
+              !Number.isInteger(runResult.rows[0].spec_version) || runResult.rows[0].spec_version < 4) {
+            throw new BadRequest('attr_set requires a specVersion 4 run')
+          }
+
+          if (body.correlationId) {
+            const duplicate = await client.query(
+              `SELECT * FROM workflow_events
+               WHERE run_id = $1 AND application_id = $2 AND event_type = 'attr_set' AND correlation_id = $3
+               ORDER BY id ASC LIMIT 1`,
+              [rawRunId, appId, body.correlationId]
+            )
+            if (duplicate.rows.length > 0) {
+              result = { event: formatEvent(duplicate.rows[0], resolveData), run: formatRun(runResult.rows[0], resolveData) }
+              break
+            }
+          }
+
+          if (runResult.rows[0].status !== 'pending' && runResult.rows[0].status !== 'running') {
+            throw new BadRequest(`run is already in terminal state: ${runResult.rows[0].status}`)
+          }
+          const attributes = applyAttributeChanges(runResult.rows[0].attributes || {}, body.eventData)
+          const updatedRun = await client.query(
+            'UPDATE workflow_runs SET attributes = $3, updated_at = NOW() WHERE id = $1 AND application_id = $2 RETURNING *',
+            [rawRunId, appId, attributes]
+          )
+          const eventRow = await insertEvent(client, rawRunId, appId, body)
+          result = { event: formatEvent(eventRow, resolveData), run: formatRun(updatedRun.rows[0], resolveData) }
           break
         }
 

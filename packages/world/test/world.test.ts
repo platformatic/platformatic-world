@@ -64,6 +64,35 @@ test('reads from env vars', async () => {
   }
 })
 
+test('requires an explicit application ID in Kubernetes', async () => {
+  const fakeSaDir = join(tmpdir(), `plt-world-app-id-test-${process.pid}`)
+  mkdirSync(fakeSaDir, { recursive: true })
+  writeFileSync(join(fakeSaDir, 'token'), 'fake-sa-token')
+  const originalUrl = process.env.PLT_WORLD_SERVICE_URL
+  const originalAppId = process.env.PLT_WORLD_APP_ID
+  const originalSaPath = process.env.PLT_WORLD_SA_PATH
+  process.env.PLT_WORLD_SERVICE_URL = 'http://localhost:9999'
+  process.env.PLT_WORLD_SA_PATH = fakeSaDir
+  delete process.env.PLT_WORLD_APP_ID
+
+  try {
+    assert.throws(
+      () => createWorld(),
+      { message: 'World application ID is required in Kubernetes; set options.appId or PLT_WORLD_APP_ID' }
+    )
+    const world = createWorld({ appId: 'explicit-app' })
+    await world.close()
+  } finally {
+    if (originalUrl) process.env.PLT_WORLD_SERVICE_URL = originalUrl
+    else delete process.env.PLT_WORLD_SERVICE_URL
+    if (originalAppId) process.env.PLT_WORLD_APP_ID = originalAppId
+    else delete process.env.PLT_WORLD_APP_ID
+    if (originalSaPath) process.env.PLT_WORLD_SA_PATH = originalSaPath
+    else delete process.env.PLT_WORLD_SA_PATH
+    rmSync(fakeSaDir, { recursive: true, force: true })
+  }
+})
+
 test('defaults deploymentVersion to local', async () => {
   const originalUrl = process.env.PLT_WORLD_SERVICE_URL
   const originalVersion = process.env.PLT_WORLD_DEPLOYMENT_VERSION
@@ -170,7 +199,7 @@ test('refuses to enqueue while the version is unresolved (local) in K8s', async 
   ;(globalThis as any).platformatic = undefined // no shared context -> stays local
 
   try {
-    const world = createWorld()
+    const world = createWorld({ appId: 'k8s-app' })
     assert.equal(await world.getDeploymentId(), 'local')
     // Enqueuing is refused so the run is not pinned to 'local' (its messages would
     // never route to the ICC-registered real-version handlers). Caller retries.
