@@ -21,8 +21,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/world
       '@workflow/world':
-        specifier: 4.2.0
-        version: 4.2.0(zod@4.3.6)
+        specifier: 4.2.1
+        version: 4.2.1
       next:
         specifier: ^16.0.0
         version: 16.2.10(@opentelemetry/api@1.9.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -55,8 +55,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/world
       '@workflow/world':
-        specifier: 4.2.0
-        version: 4.2.0(zod@4.3.6)
+        specifier: 4.2.1
+        version: 4.2.1
       next:
         specifier: ^16.0.0
         version: 16.2.10(@opentelemetry/api@1.9.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -173,8 +173,8 @@ importers:
         specifier: ^24.0.0
         version: 24.13.3
       '@workflow/world':
-        specifier: 4.2.0
-        version: 4.2.0(zod@4.3.6)
+        specifier: 4.2.1
+        version: 4.2.1
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -1809,6 +1809,9 @@ packages:
     resolution: {integrity: sha512-g7XHJXqZG/zfgcL6EQ7RjjAR5pXCYAwBu38Y3zk5meYKdkQbm3KFtSkeAS4NKbhR+5vw1lmoe4XW6YcydGOgbQ==}
     peerDependencies:
       zod: 4.3.6
+
+  '@workflow/world@4.2.1':
+    resolution: {integrity: sha512-ApVQclR6RZdvdcO/SQCG8Rnx+KiTTMNL4m8GC6rHee1jIO/bEAfUrHaw4k2SvhAHb9WG/d7nenTIXzMm+hXzbw==}
 
   '@workflow/world@5.0.0-beta.14':
     resolution: {integrity: sha512-9vWQNfvtK0k7QTCPY1OR84qlEAjfHTOms4oHmyI2LNE7G2NNTB8ydJnjNwP+qiSb6OS7jHWRcImsPWNUODR0mQ==}
@@ -6806,6 +6809,11 @@ snapshots:
       '@opentelemetry/api': 1.9.1
 
   '@workflow/world@4.2.0(zod@4.3.6)':
+    dependencies:
+      ulid: 3.0.2
+      zod: 4.3.6
+
+  '@workflow/world@4.2.1':
     dependencies:
       ulid: 3.0.2
       zod: 4.3.6
