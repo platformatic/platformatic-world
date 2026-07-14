@@ -39,6 +39,7 @@ describe('events', () => {
     assert.equal(body.run.status, 'pending')
     assert.equal(body.run.workflowName, 'test-workflow')
     assert.equal(body.run.deploymentId, 'v1.0.0')
+    assert.deepEqual(body.run.attributes, {})
     assert.ok(body.run.runId)
   })
 
@@ -183,6 +184,208 @@ describe('events', () => {
     })
     const events = JSON.parse(eventsRes.body)
     assert.equal(events.data.length, 6) // run_created, run_started, step_created, step_started, step_completed, run_completed
+  })
+
+  it('should persist initial attributes and atomically apply attr_set events', async () => {
+    const create = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 4,
+        eventData: {
+          deploymentId: 'v4',
+          workflowName: 'attributes-test',
+          input: {},
+          attributes: { keep: 'yes', remove: 'old' }
+        }
+      }
+    })
+    assert.equal(create.statusCode, 200)
+    const runId = JSON.parse(create.body).run.runId
+    const update = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events?resolveData=none`,
+      payload: {
+        eventType: 'attr_set',
+        correlationId: 'attrs-1',
+        specVersion: 4,
+        eventData: {
+          changes: [{ key: 'added', value: 'new' }, { key: 'remove', value: null }],
+          writer: { type: 'workflow' }
+        }
+      }
+    })
+    assert.equal(update.statusCode, 200)
+    const updated = JSON.parse(update.body)
+    assert.deepEqual(updated.run.attributes, { keep: 'yes', added: 'new' })
+    assert.equal(updated.event.eventData.writer.type, 'workflow')
+    assert.equal(updated.event.eventData.changes[0].key, 'added')
+
+    const duplicate = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      payload: {
+        eventType: 'attr_set',
+        correlationId: 'attrs-1',
+        specVersion: 4,
+        eventData: {
+          changes: [{ key: 'added', value: 'different' }],
+          writer: { type: 'workflow' }
+        }
+      }
+    })
+    assert.equal(duplicate.statusCode, 200)
+    assert.deepEqual(JSON.parse(duplicate.body).run.attributes, { keep: 'yes', added: 'new' })
+  })
+
+  it('should validate attributes and reject terminal-run writes', async () => {
+    const invalid = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 4,
+        eventData: { deploymentId: 'v4', workflowName: 'invalid-attributes', input: {}, attributes: { $reserved: 'no' } }
+      }
+    })
+    assert.equal(invalid.statusCode, 400)
+
+    const allowed = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 4,
+        eventData: {
+          deploymentId: 'v4',
+          workflowName: 'allowed-attributes',
+          input: {},
+          attributes: { $system: 'yes' },
+          allowReservedAttributes: true
+        }
+      }
+    })
+    assert.equal(allowed.statusCode, 200)
+    const runId = JSON.parse(allowed.body).run.runId
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      payload: { eventType: 'run_completed', specVersion: 4, eventData: { output: {} } }
+    })
+    const terminal = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      payload: {
+        eventType: 'attr_set',
+        specVersion: 4,
+        eventData: { changes: [{ key: 'late', value: 'no' }], writer: { type: 'step', stepId: 's1', attempt: 1 } }
+      }
+    })
+    assert.equal(terminal.statusCode, 400)
+  })
+
+  it('should restore initial attributes during resilient run_started', async () => {
+    const runId = `wrun_resilient_attrs_${randomBytes(8).toString('hex')}`
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      payload: {
+        eventType: 'run_started',
+        specVersion: 4,
+        eventData: {
+          deploymentId: 'v4',
+          workflowName: 'resilient-attributes',
+          input: {},
+          attributes: { restored: 'yes' }
+        }
+      }
+    })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(JSON.parse(response.body).run.attributes, { restored: 'yes' })
+
+    const events = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`
+    })
+    assert.equal(events.statusCode, 200)
+    assert.deepEqual(JSON.parse(events.body).data.map((event: any) => event.eventType), ['run_created', 'run_started'])
+  })
+
+  it('should reject attributes for spec 3 runs', async () => {
+    const invalidCreate = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 3,
+        eventData: {
+          deploymentId: 'v3',
+          workflowName: 'spec-3-attributes',
+          input: {},
+          attributes: { unsupported: 'true' }
+        }
+      }
+    })
+    assert.equal(invalidCreate.statusCode, 400)
+
+    const create = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 3,
+        eventData: { deploymentId: 'v3', workflowName: 'spec-3-run', input: {} }
+      }
+    })
+    assert.equal(create.statusCode, 200)
+    const runId = JSON.parse(create.body).run.runId
+    const update = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      payload: {
+        eventType: 'attr_set',
+        specVersion: 4,
+        eventData: {
+          changes: [{ key: 'unsupported', value: 'true' }],
+          writer: { type: 'workflow' }
+        }
+      }
+    })
+    assert.equal(update.statusCode, 400)
+  })
+
+  it('should reject invalid attr_set batches', async () => {
+    const create = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 4,
+        eventData: { deploymentId: 'v4', workflowName: 'attribute-validation', input: {} }
+      }
+    })
+    const runId = JSON.parse(create.body).run.runId
+    const invalidChanges = [
+      [{ key: 'duplicate', value: 'one' }, { key: 'duplicate', value: 'two' }],
+      [{ key: 'wrong-value', value: 1 }],
+      [{ key: 'x'.repeat(257), value: 'too-long' }],
+      [{ key: 'large', value: 'x'.repeat(257) }],
+      Array.from({ length: 65 }, (_, index) => ({ key: `key-${index}`, value: 'value' }))
+    ]
+
+    for (const changes of invalidChanges) {
+      const response = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+        payload: {
+          eventType: 'attr_set',
+          specVersion: 4,
+          eventData: { changes, writer: { type: 'workflow' } }
+        }
+      })
+      assert.equal(response.statusCode, 400)
+    }
   })
 
   it('should handle hook_created with token conflict', async () => {

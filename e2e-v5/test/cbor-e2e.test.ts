@@ -18,14 +18,14 @@ before(async () => {
 
 after(() => teardown(wfService, nextApp))
 
-test('world declares specVersion = SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT', () => {
+test('world advertises attributes while retaining CBOR support', () => {
   const world = createPlatformaticWorld({
     serviceUrl: WF_URL,
     appId: 'default',
     deploymentVersion: DEPLOYMENT_VERSION,
   })
-  assert.equal(world.specVersion, SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  assert.equal(world.specVersion, 3)
+  assert.ok(world.specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
+  assert.equal(world.specVersion, 4)
 })
 
 test('health endpoint reports specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT', { timeout: 10_000 }, async () => {
@@ -69,6 +69,17 @@ test('workflow run enqueues messages with payload_encoding=cbor', { timeout: 30_
       assert.equal(row.payload_null, true, 'payload JSONB must be null for CBOR row')
       assert.equal(row.bytes_present, true, 'payload_bytes must be present for CBOR row')
     }
+
+    const run = await client.query('SELECT spec_version, attributes FROM workflow_runs WHERE id = $1', [runId])
+    assert.equal(run.rows[0].spec_version, 4)
+    assert.deepEqual(run.rows[0].attributes, { initial: 'present', updated: 'yes' })
+
+    const attributes = await client.query(
+      `SELECT event_data FROM workflow_events
+       WHERE run_id = $1 AND event_type = 'attr_set'`,
+      [runId]
+    )
+    assert.equal(attributes.rows.length, 1)
   } finally {
     await client.end()
   }

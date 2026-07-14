@@ -22,8 +22,10 @@ function createAPIError (statusCode: number, text: string): Error {
     // Not JSON
   }
   const err: any = new Error(`HTTP ${statusCode}: ${text}`)
-  // Only set WorkflowAPIError name for specific status codes the SDK expects
-  if (statusCode === 409 || statusCode === 410 || statusCode === 425 || statusCode === 429) {
+  // SDK 5 recognizes deterministic validation failures through this structural name.
+  if (statusCode === 400) {
+    err.name = 'WorkflowWorldError'
+  } else if (statusCode === 409 || statusCode === 410 || statusCode === 425 || statusCode === 429) {
     err.name = 'WorkflowAPIError'
   }
   err.status = statusCode

@@ -69,7 +69,11 @@ export function createQueue (client: HttpClient, config: QueueConfig) {
     }
   }
 
-  const createQueueHandler = (_prefix: string, handler: (message: unknown, meta: { attempt: number; queueName: ValidQueueName; messageId: MessageId }) => Promise<void | { timeoutSeconds: number }>) => {
+  const createQueueHandler = (prefix: string, handler: (message: unknown, meta: { attempt: number; queueName: ValidQueueName; messageId: MessageId }) => Promise<void | { timeoutSeconds: number }>) => {
+    if (!/^__(?:[a-z][a-z0-9]*_)?wkf_(?:workflow|step)_$/.test(prefix)) {
+      throw new Error(`Invalid queue prefix: ${prefix}`)
+    }
+
     return async (req: Request): Promise<Response> => {
       const contentType = req.headers.get('content-type') || ''
       let body: { message: unknown; meta: { queueName: ValidQueueName; messageId: MessageId; attempt: number } }
@@ -87,7 +91,14 @@ export function createQueue (client: HttpClient, config: QueueConfig) {
         body = await req.json() as typeof body
       }
 
-      const result = await handler(body.message, body.meta)
+      const meta = body?.meta
+      if (!meta || typeof meta.queueName !== 'string' || !meta.queueName.startsWith(prefix) ||
+          !/^__(?:[a-z][a-z0-9]*_)?wkf_(?:workflow|step)_.+$/.test(meta.queueName) ||
+          typeof meta.messageId !== 'string' || typeof meta.attempt !== 'number' || !Number.isFinite(meta.attempt)) {
+        return Response.json({ error: 'Invalid queue message metadata' }, { status: 400 })
+      }
+
+      const result = await handler(body.message, meta)
 
       // The queue service handles re-queuing based on the timeoutSeconds in the response.
       // Do not re-queue here to avoid creating duplicate deferred messages.

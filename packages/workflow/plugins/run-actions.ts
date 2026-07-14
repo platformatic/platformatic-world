@@ -44,8 +44,15 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
         }), row.spec_version]
       )
 
-      // Enqueue flow message targeting the original deployment version
-      const queueName = `__wkf_workflow_${row.workflow_name}`
+      // Preserve the namespace used by the original run when one was persisted.
+      const originalQueue = await client.query(
+        `SELECT queue_name FROM workflow_queue_messages
+         WHERE run_id = $1 AND application_id = $2
+           AND queue_name ~ '^__([a-z][a-z0-9]*_)?wkf_workflow_.+$'
+         ORDER BY id ASC LIMIT 1`,
+        [runId, appId]
+      )
+      const queueName = originalQueue.rows[0]?.queue_name || `__wkf_workflow_${row.workflow_name}`
       await client.query(
         `INSERT INTO workflow_queue_messages
          (queue_name, run_id, deployment_version, application_id, payload, status)
@@ -153,7 +160,7 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
       await app.pg.query(
         `UPDATE workflow_queue_messages SET status = 'pending', deliver_at = NULL
          WHERE run_id = $1 AND application_id = $2 AND status = 'deferred'
-           AND queue_name LIKE '__wkf_step_%'`,
+           AND queue_name ~ '^__([a-z][a-z0-9]*_)?wkf_(workflow|step)_.+$'`,
         [runId, appId]
       )
       await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")

@@ -1,7 +1,7 @@
 // Same CBOR ground-truth assertions as e2e-v5/test/cbor-e2e.test.ts, but
 // exercising the v4 SDK path (workflow@4.2.4 → @workflow/core@4.2.4 →
 // @workflow/world@4.1.1). CBOR was backported to v4.1.0-beta.17, so a v4
-// SDK also passes specVersion=3 to world.queue() and the DB rows should
+// SDK passes the world's advertised specVersion to world.queue() and the DB rows should
 // come out as payload_encoding='cbor'.
 
 import { test, before, after } from 'node:test'
@@ -19,14 +19,14 @@ before(async () => {
 
 after(() => ctx?.kill())
 
-test('v4: world declares specVersion = SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT', () => {
+test('v4: world advertises attributes while retaining CBOR support', () => {
   const world = createPlatformaticWorld({
     serviceUrl: ctx.wfUrl,
     appId: 'default',
     deploymentVersion: DEPLOYMENT_VERSION,
   })
-  assert.equal(world.specVersion, SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  assert.equal(world.specVersion, 3)
+  assert.ok(world.specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
+  assert.equal(world.specVersion, 4)
 })
 
 test('v4: health endpoint reports specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT', { timeout: 10_000 }, async () => {
@@ -40,7 +40,7 @@ test('v4: health endpoint reports specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEU
 test('v4: workflow run enqueues messages with payload_encoding=cbor', { timeout: 30_000 }, async () => {
   // Run addTenWorkflow end-to-end and verify the DB has CBOR rows — the
   // ground-truth signal that the v4 SDK negotiated CBOR with our world
-  // via world.specVersion=3 and sent application/cbor bodies.
+  // via world.specVersion=4 and sent application/cbor bodies.
   const res = await fetch(`${ctx.nextUrl}/api/trigger`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

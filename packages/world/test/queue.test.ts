@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { decode, encode } from 'cbor-x'
 import { SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT } from '@workflow/world'
 import { createPlatformaticWorld } from '../src/index.ts'
+import { HttpClient } from '../src/lib/client.ts'
 
 interface RecordedRequest {
   contentType: string
@@ -197,12 +198,61 @@ test('createQueueHandler accepts CBOR', async () => {
   await world.close!()
 })
 
-test('world declares specVersion 3', () => {
+test('createQueueHandler accepts a namespaced prefix and rejects mismatched metadata', async () => {
+  const world = createPlatformaticWorld({
+    serviceUrl: 'http://localhost:9999',
+    appId: 'app',
+    deploymentVersion: 'v1'
+  })
+  const handler = world.createQueueHandler('__tenant1_wkf_step_' as any, async () => {})
+  const valid = await handler(new Request('http://localhost/step', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      message: {},
+      meta: { queueName: '__tenant1_wkf_step_name', messageId: 'm3', attempt: 1 }
+    })
+  }))
+  assert.equal(valid.status, 200)
+
+  const invalid = await handler(new Request('http://localhost/step', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      message: {},
+      meta: { queueName: '__wkf_step_name', messageId: 'm4', attempt: 1 }
+    })
+  }))
+  assert.equal(invalid.status, 400)
+  assert.throws(() => world.createQueueHandler('__Tenant_wkf_step_' as any, async () => {}), /Invalid queue prefix/)
+  await world.close!()
+})
+
+test('world declares specVersion 4', () => {
   const world = createPlatformaticWorld({
     serviceUrl: 'http://localhost:9999',
     appId: 'app',
     deploymentVersion: 'v1',
   })
-  assert.equal(world.specVersion, SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  assert.equal(world.specVersion, 3)
+  assert.ok(world.specVersion > SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
+  assert.equal(world.specVersion, 4)
+})
+
+test('HTTP 400 errors are classified as WorkflowWorldError', async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(400, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ message: 'invalid attributes' }))
+  })
+  await new Promise<void>(resolve => server.listen(0, resolve))
+  const port = (server.address() as AddressInfo).port
+  const client = new HttpClient({ serviceUrl: `http://localhost:${port}`, appId: 'app' })
+  try {
+    await assert.rejects(
+      () => client.post('/runs/run/events', {}),
+      (err: any) => err.name === 'WorkflowWorldError' && err.status === 400
+    )
+  } finally {
+    await client.close()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
 })
