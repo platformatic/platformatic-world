@@ -13,7 +13,7 @@ describe('dead-letters', () => {
     await teardownTest(ctx)
   })
 
-  async function createDeadMessage (queueName: string, payload: any, terminalized = false): Promise<number> {
+  async function createDeadMessage (queueName: string, payload: any, failureFinalized = false): Promise<number> {
     const appResult = await ctx.app.pg.query(
       'SELECT id FROM workflow_applications WHERE app_id = $1',
       [ctx.appId]
@@ -23,14 +23,14 @@ describe('dead-letters', () => {
     const result = await ctx.app.pg.query(
       `INSERT INTO workflow_queue_messages
        (queue_name, run_id, deployment_version, application_id, payload, status, attempts,
-        last_failure, dead_at, terminalized_at)
+        last_failure, dead_at, failure_finalized_at)
        VALUES ($1, 'run-1', 'v1', $2, $3, 'dead', 10, $4, NOW(),
                CASE WHEN $5 THEN NOW() ELSE NULL END)
        RETURNING id`,
       [queueName, applicationId, JSON.stringify(payload), {
         code: 'HTTP_503',
         message: 'Target returned HTTP 503',
-      }, terminalized]
+      }, failureFinalized]
     )
     return result.rows[0].id
   }
@@ -52,7 +52,7 @@ describe('dead-letters', () => {
     assert.equal(body.data[0].queueName, 'queue-b') // newest first
     assert.equal(body.data[0].lastFailure.code, 'HTTP_503')
     assert.ok(body.data[0].deadAt)
-    assert.equal(body.data[0].terminalizedAt, null)
+    assert.equal(body.data[0].failureFinalizedAt, null)
   })
 
   it('should filter by queueName', async () => {
@@ -119,8 +119,8 @@ describe('dead-letters', () => {
     assert.equal(response.statusCode, 400)
   })
 
-  it('should reject retry for a terminalized dead message', async () => {
-    const id = await createDeadMessage('terminalized-queue', { retry: false }, true)
+  it('should reject retry for a dead message with a finalized failure', async () => {
+    const id = await createDeadMessage('finalized-failure-queue', { retry: false }, true)
     const response = await ctx.app.inject({
       method: 'POST',
       url: `/api/v1/apps/${ctx.appId}/dead-letters/msg_${id}/retry`,
@@ -129,11 +129,11 @@ describe('dead-letters', () => {
 
     assert.equal(response.statusCode, 400)
     const check = await ctx.app.pg.query(
-      'SELECT status, terminalized_at FROM workflow_queue_messages WHERE id = $1',
+      'SELECT status, failure_finalized_at FROM workflow_queue_messages WHERE id = $1',
       [id]
     )
     assert.equal(check.rows[0].status, 'dead')
-    assert.ok(check.rows[0].terminalized_at)
+    assert.ok(check.rows[0].failure_finalized_at)
   })
 
   it('should paginate dead letters', async () => {

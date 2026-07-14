@@ -33,7 +33,7 @@ describe('poller result handling', () => {
     return runId
   }
 
-  it('terminalizes a workflow delivery exactly once and sanitizes target metadata', async () => {
+  it('finalizes a workflow delivery failure exactly once and sanitizes target metadata', async () => {
     const runId = await createRun('terminal-workflow')
     await ctx.app.pg.query(
       `INSERT INTO workflow_hooks
@@ -71,7 +71,7 @@ describe('poller result handling', () => {
     }
 
     const message = (await ctx.app.pg.query(
-      `SELECT status, attempts, last_failure, dead_at, terminalized_at
+      `SELECT status, attempts, last_failure, dead_at, failure_finalized_at
        FROM workflow_queue_messages WHERE id = $1`,
       [msg.id]
     )).rows[0]
@@ -79,7 +79,7 @@ describe('poller result handling', () => {
     assert.equal(message.attempts, 10)
     assert.equal(message.last_failure.target.url, 'https://example.com/flow')
     assert.ok(message.dead_at)
-    assert.ok(message.terminalized_at)
+    assert.ok(message.failure_finalized_at)
 
     const run = (await ctx.app.pg.query(
       'SELECT status FROM workflow_runs WHERE id = $1',
@@ -104,7 +104,7 @@ describe('poller result handling', () => {
 
   for (const encoding of ['json', 'cbor'] as const) {
     for (const queueKind of ['step', 'workflow'] as const) {
-      it(`terminalizes a ${encoding.toUpperCase()} ${queueKind}-queue background step with one continuation`, async () => {
+      it(`finalizes a ${encoding.toUpperCase()} ${queueKind}-queue background step failure with one continuation`, async () => {
         const workflowName = `background-${encoding}`
         const runId = await createRun(workflowName)
         const stepId = `step-${randomUUID()}`

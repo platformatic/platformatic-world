@@ -24,7 +24,7 @@ async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
 
     const result = await app.pg.query(
       `SELECT id, idempotency_key, queue_name, run_id, deployment_version, payload, attempts,
-              last_failure, dead_at, terminalized_at, created_at
+              last_failure, dead_at, failure_finalized_at, created_at
        FROM workflow_queue_messages
        WHERE ${conditions.join(' AND ')}
        ORDER BY created_at DESC
@@ -43,7 +43,7 @@ async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
       attempts: row.attempts,
       lastFailure: row.last_failure,
       deadAt: row.dead_at,
-      terminalizedAt: row.terminalized_at,
+      failureFinalizedAt: row.failure_finalized_at,
       createdAt: row.created_at,
     }))
     const nextCursor = hasMore ? String(offset + limit) : null
@@ -67,13 +67,13 @@ async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
          SET status = 'pending', attempts = 0, next_retry_at = NULL,
              dead_at = NULL, updated_at = NOW()
          WHERE id = $1 AND application_id = $2 AND status = 'dead'
-           AND terminalized_at IS NULL
+           AND failure_finalized_at IS NULL
          RETURNING id`,
         [numericId, appId]
       )
 
       if (result.rows.length === 0) {
-        throw new BadRequest('message not found, not dead, or already terminalized')
+        throw new BadRequest('message not found, not dead, or failure already finalized')
       }
 
       await client.query("SELECT pg_notify('deferred_messages', '{}')")

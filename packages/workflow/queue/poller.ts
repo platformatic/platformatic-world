@@ -196,7 +196,7 @@ async function failBackgroundStep (client: pg.PoolClient, msg: any, failure: Fai
   return true
 }
 
-async function terminalize (client: pg.PoolClient, msg: any, failure: FailureDetail): Promise<void> {
+async function finalizeFailure (client: pg.PoolClient, msg: any, failure: FailureDetail): Promise<void> {
   // v5 dispatches background steps through the workflow queue, while v4 uses
   // a dedicated step queue. The payload is the authoritative discriminator.
   if (await failBackgroundStep(client, msg, failure)) return
@@ -207,7 +207,7 @@ async function terminalize (client: pg.PoolClient, msg: any, failure: FailureDet
   }
 }
 
-async function lockRunForTerminalization (client: pg.PoolClient, msg: any): Promise<void> {
+async function lockRunForFailureFinalization (client: pg.PoolClient, msg: any): Promise<void> {
   if (!msg.run_id) return
   if (msg.queue_name.startsWith('__wkf_workflow_')) await ensureRunForWorkflowDelivery(client, msg)
   await client.query(
@@ -318,7 +318,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   async function executeOnce (): Promise<void> {
     const client = await pool.connect()
     try {
-      // 1. Terminalize rows left at the retry ceiling by older pollers.
+      // 1. Finalize failures for rows left at the retry ceiling by older pollers.
       const exhausted = await client.query(
         `SELECT * FROM workflow_queue_messages
          WHERE status = 'failed' AND attempts >= 10
@@ -516,16 +516,16 @@ export async function handleExhaustedMessage (client: pg.PoolClient, msg: any): 
 
   await client.query('BEGIN')
   try {
-    await lockRunForTerminalization(client, msg)
+    await lockRunForFailureFinalization(client, msg)
     const updated = await client.query(
       `UPDATE workflow_queue_messages
-       SET status = 'dead', last_failure = $4, dead_at = NOW(), terminalized_at = NOW(),
+       SET status = 'dead', last_failure = $4, dead_at = NOW(), failure_finalized_at = NOW(),
            next_retry_at = NULL, updated_at = NOW()
        WHERE id = $1 AND application_id = $2 AND status = 'failed' AND attempts = $3
        RETURNING id`,
       [msg.id, msg.application_id, msg.attempts, failure]
     )
-    if (updated.rows.length > 0) await terminalize(client, msg, failure)
+    if (updated.rows.length > 0) await finalizeFailure(client, msg, failure)
     await client.query('COMMIT')
   } catch (err) {
     await client.query('ROLLBACK')
@@ -545,16 +545,16 @@ export async function handleNoRoute (client: pg.PoolClient, msg: any): Promise<v
   await client.query('BEGIN')
   try {
     if (isMaxAttempts(attempts)) {
-      await lockRunForTerminalization(client, msg)
+      await lockRunForFailureFinalization(client, msg)
       const updated = await client.query(
         `UPDATE workflow_queue_messages
          SET status = 'dead', attempts = $4, last_failure = $5, dead_at = NOW(),
-             terminalized_at = NOW(), next_retry_at = NULL, updated_at = NOW()
+             failure_finalized_at = NOW(), next_retry_at = NULL, updated_at = NOW()
          WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3
          RETURNING id`,
         [msg.id, msg.application_id, msg.attempts, attempts, failure]
       )
-      if (updated.rows.length > 0) await terminalize(client, msg, failure)
+      if (updated.rows.length > 0) await finalizeFailure(client, msg, failure)
     } else {
       const delay = getRetryDelay(attempts)
       await client.query(
@@ -620,16 +620,16 @@ export async function handleDispatchResult (
       const failure = failureDetail(msg, attempts, error.code, error.message, target, result.statusCode)
 
       if (isMaxAttempts(attempts)) {
-        await lockRunForTerminalization(client, msg)
+        await lockRunForFailureFinalization(client, msg)
         const updated = await client.query(
           `UPDATE workflow_queue_messages
            SET status = 'dead', attempts = $4, last_failure = $5, dead_at = NOW(),
-               terminalized_at = NOW(), next_retry_at = NULL, updated_at = NOW()
+               failure_finalized_at = NOW(), next_retry_at = NULL, updated_at = NOW()
            WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3
            RETURNING id`,
           [msg.id, msg.application_id, msg.attempts, attempts, failure]
         )
-        if (updated.rows.length > 0) await terminalize(client, msg, failure)
+        if (updated.rows.length > 0) await finalizeFailure(client, msg, failure)
       } else {
         const delay = getRetryDelay(attempts)
         await client.query(
