@@ -1,9 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { Pool } from 'undici'
 import { encode } from 'cbor-x'
-
-const K8S_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
+import { saPath } from './sa-path.ts'
 
 export interface ClientConfig {
   serviceUrl: string
@@ -56,24 +55,21 @@ function buildQuery (query?: QueryParams): string {
 export class HttpClient {
   #pool: Pool
   #baseUrl: string
-  #token: string | null
+  #inK8s: boolean
 
   constructor (config: ClientConfig) {
     this.#pool = new Pool(config.serviceUrl)
     this.#baseUrl = `/api/v1/apps/${config.appId}`
-    this.#token = null
-    try {
-      this.#token = readFileSync(K8S_TOKEN_PATH, 'utf8').trim()
-    } catch {
-      // Not running in K8s — single-tenant mode, no auth needed
-    }
+    // No token file means single-tenant mode, where no auth is sent.
+    this.#inK8s = existsSync(saPath('token'))
   }
 
   #authHeaders (): Record<string, string> {
-    if (this.#token) {
-      return { authorization: `Bearer ${this.#token}` }
-    }
-    return {}
+    if (!this.#inK8s) return {}
+    // Read per request: the kubelet rotates this token, so a copy cached at
+    // construction expires within a day and the service then rejects it.
+    const token = readFileSync(saPath('token'), 'utf8').trim()
+    return { authorization: `Bearer ${token}` }
   }
 
   #path (path: string, query?: QueryParams): string {
