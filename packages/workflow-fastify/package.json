@@ -1,6 +1,6 @@
 {
   "name": "@platformatic/workflow-fastify",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Fastify plugin that mounts Vercel Workflow SDK handlers, backed by @platformatic/world",
   "type": "module",
   "exports": {
