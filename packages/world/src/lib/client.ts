@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { Pool } from 'undici'
 import { encode } from 'cbor-x'
-import { saPath } from './sa-path.ts'
+import { saPath, isRunningInK8s } from './platform.ts'
 
 export interface ClientConfig {
   serviceUrl: string
@@ -61,7 +61,7 @@ export class HttpClient {
     this.#pool = new Pool(config.serviceUrl)
     this.#baseUrl = `/api/v1/apps/${config.appId}`
     // No token file means single-tenant mode, where no auth is sent.
-    this.#inK8s = existsSync(saPath('token'))
+    this.#inK8s = isRunningInK8s()
   }
 
   #authHeaders (): Record<string, string> {
