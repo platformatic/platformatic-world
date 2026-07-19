@@ -19,14 +19,17 @@ before(async () => {
 
 after(() => ctx?.kill())
 
-test('v4: world advertises attributes while retaining CBOR support', () => {
+test('v4: world advertises CBOR support to the v4 runtime', () => {
+  // The shared @platformatic/world declares a single specVersion ceiling
+  // (currently 5, gzip compression). The v4 suite only cares that it is high
+  // enough for the v4 SDK to negotiate CBOR — it must not pin the exact
+  // ceiling, which belongs to the v5 world line and isn't exported here.
   const world = createPlatformaticWorld({
     serviceUrl: ctx.wfUrl,
     appId: 'default',
     deploymentVersion: DEPLOYMENT_VERSION,
   })
   assert.ok(world.specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  assert.equal(world.specVersion, 4)
 })
 
 test('v4: health endpoint reports specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT', { timeout: 10_000 }, async () => {

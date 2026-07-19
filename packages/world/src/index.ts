@@ -13,13 +13,20 @@ import { createEncryption } from './lib/encryption.ts'
 
 export interface PlatformaticWorldConfig extends ClientConfig, QueueConfig {}
 
-const SPEC_VERSION_SUPPORTS_ATTRIBUTES = 4
+// Declared capability ceiling, not a pin to one runtime. Spec 5 adds
+// gzip-compressed payloads ('gzip' format prefix); we can carry those because
+// storage treats payload bytes opaquely (base64 round-trip, no format
+// inspection), so nothing here needs to decode them. The v5 runtime hard-fails
+// at startup unless the world declares 5; the v4 runtime only reads this for
+// health-check messages and stamps runs from its own SPEC_VERSION_CURRENT, so
+// raising it stays inert for v4.
+const SPEC_VERSION_SUPPORTS_COMPRESSION = 5
 
 export function createPlatformaticWorld (config: PlatformaticWorldConfig): World {
   const client = new HttpClient(config)
 
   return {
-    specVersion: SPEC_VERSION_SUPPORTS_ATTRIBUTES,
+    specVersion: SPEC_VERSION_SUPPORTS_COMPRESSION,
     ...createStorage(client),
     ...createQueue(client, config),
     ...createStreamer(client),
