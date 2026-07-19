@@ -95,6 +95,21 @@ export async function waitForHookByToken (token: string, timeoutMs = 15_000): Pr
 
 let sdkResumeHook: ((tokenOrHook: any, payload: any) => Promise<any>) | undefined
 
+// Beta.28+ of the SDK stopped selecting the world dynamically from
+// WORKFLOW_TARGET_WORLD at runtime: framework plugins (e.g. @workflow/next)
+// alias @workflow/core/runtime/world-target to the world package at build
+// time. This bare node:test process has no such build step, so the target
+// stub throws ("Workflow target world was not statically injected") on any
+// in-process SDK call (resumeHook, start, getWorld, healthCheck, ...). Inject
+// our world into the SDK's global cache via setWorld() so getWorld() resolves
+// it instead of hitting the stub. The env vars createWorld() reads
+// (PLT_WORLD_*) are set by setup() before this runs.
+async function injectWorldIntoTestProcess (): Promise<void> {
+  const { setWorld } = await import('workflow/runtime')
+  const { createWorld } = await import('@platformatic/world')
+  setWorld(createWorld())
+}
+
 export async function loadSdkHookFunctions (): Promise<void> {
   if (sdkResumeHook) return
   const api = await import('workflow/api')
@@ -242,6 +257,7 @@ export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: Sp
   process.env.PLT_WORLD_SERVICE_URL = WF_URL
   process.env.PLT_WORLD_APP_ID = 'default'
   process.env.PLT_WORLD_DEPLOYMENT_VERSION = DEPLOYMENT_VERSION
+  await injectWorldIntoTestProcess()
   await loadSdkHookFunctions()
 
   return { wfService, nextApp }
