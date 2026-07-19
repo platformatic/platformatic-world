@@ -44,7 +44,7 @@ async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<vo
   }
 
   const validateK8s = config.k8s
-    ? createK8sTokenValidator(app.pg, config.k8s)
+    ? createK8sTokenValidator(app.pg, config.k8s, app.log)
     : null
 
   app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {

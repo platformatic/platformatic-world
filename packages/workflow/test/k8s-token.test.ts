@@ -2,6 +2,9 @@ import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { setupTest, teardownTest, type TestContext } from './helper.ts'
 import { createK8sTokenValidator } from '../lib/auth/k8s-token.ts'
 
@@ -264,9 +267,54 @@ describe('k8s-token validator', () => {
     })
 
     await validate('test-token-for-header')
-    // In test env (no K8s), ownToken is undefined so no auth header
+    // No SA token file outside K8s, so no auth header is sent
     assert.equal(receivedAuthHeader, undefined)
 
     mockServer.close()
+  })
+
+  it('should send the rotated own SA token, not the one present at creation', async () => {
+    const saDir = join(tmpdir(), `wf-k8s-token-${process.pid}`)
+    mkdirSync(saDir, { recursive: true })
+    const saTokenPath = join(saDir, 'token')
+    writeFileSync(saTokenPath, 'own-token-one')
+
+    const seen: (string | undefined)[] = []
+    mockServer = createServer((req, res) => {
+      seen.push(req.headers.authorization as string | undefined)
+      req.on('data', () => {})
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          status: {
+            authenticated: true,
+            user: { username: 'system:serviceaccount:platformatic:platformatic' },
+          },
+        }))
+      })
+    })
+    await new Promise<void>((resolve) => { mockServer.listen(0, resolve) })
+    const addr = mockServer.address() as { port: number }
+    apiServer = `http://127.0.0.1:${addr.port}`
+
+    const validate = createK8sTokenValidator(ctx.app.pg, {
+      apiServer,
+      adminServiceAccount: 'platformatic:platformatic',
+      saTokenPath,
+    })
+
+    try {
+      await validate('caller-token-a')
+
+      // The kubelet rotates our own token on disk; it must be picked up.
+      writeFileSync(saTokenPath, 'own-token-two')
+      // A different caller token avoids the success cache.
+      await validate('caller-token-b')
+
+      assert.deepEqual(seen, ['Bearer own-token-one', 'Bearer own-token-two'])
+    } finally {
+      mockServer.close()
+      rmSync(saDir, { recursive: true, force: true })
+    }
   })
 })

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getSharedContext } from '@platformatic/globals'
 import type { World } from '@workflow/world'
+import { saPath } from './lib/sa-path.ts'
 import { HttpClient } from './lib/client.ts'
 import type { ClientConfig } from './lib/client.ts'
 import { createStorage } from './lib/storage.ts'
@@ -70,11 +71,6 @@ async function versionFromSharedContext (): Promise<string | undefined> {
   } catch {
     return undefined
   }
-}
-
-function saPath (file: string): string {
-  const base = process.env.PLT_WORLD_SA_PATH || '/var/run/secrets/kubernetes.io/serviceaccount'
-  return `${base}/${file}`
 }
 
 function isRunningInK8s (): boolean {

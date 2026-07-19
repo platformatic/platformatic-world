@@ -1,11 +1,18 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { request as undiciRequest, Agent } from 'undici'
 import type pg from 'pg'
+
+const K8S_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 
 interface K8sConfig {
   apiServer: string
   caCert?: string
   adminServiceAccount?: string
+  saTokenPath?: string
+}
+
+interface Logger {
+  warn: (obj: object, msg: string) => void
 }
 
 export interface K8sValidationResult {
@@ -21,7 +28,7 @@ interface CacheEntry {
 
 const EXPIRY_BUFFER = 30_000 // 30 seconds before actual expiry
 
-export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
+export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig, logger?: Logger) {
   const cache = new Map<string, CacheEntry>()
 
   let dispatcher: Agent | undefined
@@ -36,13 +43,11 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
     }
   }
 
-  // Read this pod's own SA token to authenticate with the K8s API server
-  let ownToken: string | undefined
-  try {
-    ownToken = readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf-8').trim()
-  } catch {
-    // Token not available
-  }
+  // This pod's own SA token authenticates the TokenReview call. It is read per
+  // call because the kubelet rotates it and a copy cached here would expire
+  // within a day, making every caller look unauthenticated.
+  const saTokenPath = config.saTokenPath || K8S_TOKEN_PATH
+  const inK8s = existsSync(saTokenPath)
 
   return async function validateK8sToken (token: string): Promise<K8sValidationResult | null> {
     // Check cache
@@ -59,8 +64,8 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
     })
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (ownToken) {
-      headers.Authorization = `Bearer ${ownToken}`
+    if (inK8s) {
+      headers.Authorization = `Bearer ${readFileSync(saTokenPath, 'utf-8').trim()}`
     }
 
     const response = await undiciRequest(
@@ -74,7 +79,10 @@ export function createK8sTokenValidator (pool: pg.Pool, config: K8sConfig) {
     )
 
     if (response.statusCode >= 400) {
-      await response.body.dump()
+      // Our own credentials or connectivity failed, not the caller's. Log it so
+      // this is not silently reported to every caller as invalid credentials.
+      const body = await response.body.text()
+      logger?.warn({ statusCode: response.statusCode, body }, 'TokenReview request failed')
       return null
     }
 
