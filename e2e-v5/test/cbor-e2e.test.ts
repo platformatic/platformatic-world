@@ -1,7 +1,11 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import pg from 'pg'
-import { SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT } from '@workflow/world'
+import {
+  SPEC_VERSION_CURRENT,
+  SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT,
+  SPEC_VERSION_SUPPORTS_COMPRESSION,
+} from '@workflow/world'
 import { createPlatformaticWorld } from '@platformatic/world'
 import {
   setup, teardown, waitForRunStatus,
@@ -18,14 +22,14 @@ before(async () => {
 
 after(() => teardown(wfService, nextApp))
 
-test('world advertises attributes while retaining CBOR support', () => {
+test('world advertises compression while retaining CBOR support', () => {
   const world = createPlatformaticWorld({
     serviceUrl: WF_URL,
     appId: 'default',
     deploymentVersion: DEPLOYMENT_VERSION,
   })
   assert.ok(world.specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  assert.equal(world.specVersion, 4)
+  assert.equal(world.specVersion, SPEC_VERSION_SUPPORTS_COMPRESSION)
 })
 
 test('health endpoint reports specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT', { timeout: 10_000 }, async () => {
@@ -71,7 +75,7 @@ test('workflow run enqueues messages with payload_encoding=cbor', { timeout: 30_
     }
 
     const run = await client.query('SELECT spec_version, attributes FROM workflow_runs WHERE id = $1', [runId])
-    assert.equal(run.rows[0].spec_version, 4)
+    assert.equal(run.rows[0].spec_version, SPEC_VERSION_CURRENT)
     assert.deepEqual(run.rows[0].attributes, { initial: 'present', updated: 'yes' })
 
     const attributes = await client.query(

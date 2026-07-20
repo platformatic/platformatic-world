@@ -252,14 +252,18 @@ test('createQueueHandler accepts a health check for the alternate endpoint', asy
   await world.close!()
 })
 
-test('world declares specVersion 4', () => {
+test('world declares specVersion 5 (compression)', () => {
   const world = createPlatformaticWorld({
     serviceUrl: 'http://localhost:9999',
     appId: 'app',
     deploymentVersion: 'v1',
   })
   assert.ok(world.specVersion > SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  assert.equal(world.specVersion, 4)
+  // Literal, not SPEC_VERSION_SUPPORTS_COMPRESSION: this package's @workflow/world
+  // devDep is the v4 line, which doesn't export that constant, and it's a
+  // type-only dep we don't want to turn into a runtime value import. This is the
+  // world's declared capability ceiling — keep it pinned so a change is deliberate.
+  assert.equal(world.specVersion, 5)
 })
 
 test('HTTP 400 errors are classified as WorkflowWorldError', async () => {
