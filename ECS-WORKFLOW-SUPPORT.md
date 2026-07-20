@@ -28,7 +28,7 @@ On Kubernetes all three answers are "yes", so `existsSync('/var/run/secrets/kube
 
 | Site | Gate | Result on ECS today |
 |---|---|---|
-| `index.ts:93` | require an explicit appId | falls back to `readAppName()`, so an app whose package is named `next` claims tenant `next` |
+| `index.ts:93` | warn when the appId was not configured | silent fallback to `readAppName()`, so an app whose package is named `next` claims tenant `next` with no signal |
 | `index.ts:32` | skip self-registering handlers, ICC does it with reachable URLs | self-registers `http://localhost:$PORT`, unreachable from another task |
 | `index.ts:~108` | `requireResolvedVersion` | enqueues as version `local` instead of waiting for the assigned one |
 
@@ -139,6 +139,8 @@ Stop hardcoding the SA path at `db.ts:23`. Note that this check now selects tena
 
 Switch the three sites in section 2 from `isRunningInK8s()` to `isManagedPlatform()`. `#authHeaders()` in `lib/client.ts` keeps using `isRunningInK8s()`, since only Kubernetes supplies a token to send.
 
+The application ID is a warning rather than a requirement. Requiring it would mean every deployment that ICC does not template, which is observe mode and desk alike, has to hand-set an identity the deployer already knows, and minimising what a user must configure is a product requirement. So the client resolves `options.appId`, then `PLT_WORLD_APP_ID`, then `PLT_APP_NAME` (the name watt-extra already resolves), and finally the package name. On a managed platform, falling through to the package name logs which ID was assumed, because that name is not guaranteed unique and a wrong claim is not always caught: where apps share a service account the binding check authorises any application bound to it.
+
 With no ECS metadata present, behaviour is bit for bit unchanged on Kubernetes and on a laptop.
 
 ### 5.4 ICC and machinist
@@ -171,7 +173,7 @@ Beyond that, `PLT_WORLD_APP_ID` and `PLT_WORLD_DEPLOYMENT_VERSION` must be injec
 
 **Detected, never configured.** Whether to authenticate, whether to be multi-tenant, whether to self-register handlers, and whether to require a resolved deployment version. No mode flag and no platform switch is set by anyone, on any of the three environments.
 
-**Injected by ICC, not set by a user.** On managed platforms the app receives `PLT_WORLD_SERVICE_URL`, `PLT_WORLD_APP_ID`, and `PLT_WORLD_DEPLOYMENT_VERSION`, and ICC registers the application. The identifier cannot be detected: that is exactly the `readAppName()` collision this plan removes. Detection establishes which platform a process is on, not which application it is.
+**Injected by ICC, not set by a user.** On managed platforms the app receives `PLT_WORLD_SERVICE_URL`, `PLT_WORLD_APP_ID`, and `PLT_WORLD_DEPLOYMENT_VERSION`, and ICC registers the application. The identifier cannot be reliably detected, so when it is absent the client falls back to the package name and says so (section 5.3). Detection establishes which platform a process is on, not which application it is.
 
 **Operator configuration, set once per deployment.** `DATABASE_URL` for the service, plus `K8S_ADMIN_SERVICE_ACCOUNT` on Kubernetes. The latter has no default, and without it `adminServiceAccount` is undefined, so `isAdmin` never becomes true and ICC is not recognised as the control plane. It is not derivable, since the service cannot know which service account belongs to ICC.
 
@@ -213,7 +215,7 @@ Note that steps 1 and 2 do not leave ECS neutral in the meantime. Unregistered a
 
 Covered by `packages/workflow/test/ecs-multitenancy.test.ts`: two applications share one unauthenticated service and a cross-tenant read returns only the caller's data, a run is unreadable from another tenant, and an application that was never registered fails closed with a 404 rather than reading as an empty one.
 
-Covered by `packages/world/test/platform.test.ts`: ECS detected from both metadata variables, Kubernetes both managed and authenticated, standalone neither, an explicit appId required on a managed platform, and no handler self-registration there.
+Covered by `packages/world/test/platform.test.ts`: ECS detected from both metadata variables, Kubernetes both managed and authenticated, standalone neither, the appId falling back with a warning on a managed platform, and no handler self-registration there.
 
 Both suites simulate a platform purely through environment: `PLT_WORLD_SA_PATH` points service account discovery at a path that does or does not exist, and ECS is simulated by setting the metadata variable. No cluster or AWS account is needed.
 

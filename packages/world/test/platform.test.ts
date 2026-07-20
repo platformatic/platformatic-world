@@ -75,20 +75,32 @@ test('K8s is managed and additionally supplies an identity', async () => {
   }
 })
 
-test('on ECS an explicit application ID is required', async () => {
+test('on ECS the application ID falls back, warning which one it assumed', async () => {
   await withEnv({
     PLT_WORLD_SA_PATH: join(tmpdir(), 'plt-world-absent'),
     ECS_CONTAINER_METADATA_URI_V4: 'http://169.254.170.2/v4/abc',
     ECS_CONTAINER_METADATA_URI: undefined,
     PLT_WORLD_SERVICE_URL: 'http://localhost:9999',
     PLT_WORLD_APP_ID: undefined,
+    PLT_APP_NAME: undefined,
   }, async () => {
-    assert.throws(
-      () => createWorld(),
-      { message: 'World application ID is required on a managed platform; set options.appId or PLT_WORLD_APP_ID' }
-    )
-    const world = createWorld({ appId: 'explicit-app' })
-    await world.close()
+    const warnings: string[] = []
+    const originalWarn = console.warn
+    console.warn = (msg: string) => { warnings.push(String(msg)) }
+
+    try {
+      const fallback = createWorld()
+      await fallback.close()
+      assert.equal(warnings.length, 1)
+      assert.match(warnings[0], /no application ID configured/)
+
+      warnings.length = 0
+      const explicit = createWorld({ appId: 'explicit-app' })
+      await explicit.close()
+      assert.deepEqual(warnings, [])
+    } finally {
+      console.warn = originalWarn
+    }
   })
 })
 
