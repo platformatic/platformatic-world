@@ -105,11 +105,21 @@ export function createWorld (options?: Partial<CreateWorldOptions>): World {
   }
 
   const runningInK8s = isRunningInK8s()
-  const explicitAppId = options?.appId || process.env.PLT_WORLD_APP_ID
-  if (runningInK8s && !explicitAppId) {
-    throw new Error('World application ID is required in Kubernetes; set options.appId or PLT_WORLD_APP_ID')
-  }
+  // PLT_APP_NAME is the platform's own name for the application (watt-extra
+  // resolves it the same way), so it is preferred over the package name.
+  const explicitAppId = options?.appId ||
+    process.env.PLT_WORLD_APP_ID ||
+    process.env.PLT_APP_NAME
   const appId = explicitAppId || readAppName()
+  if (runningInK8s && !explicitAppId) {
+    // The package name is not guaranteed unique -- a Next.js app is often just
+    // "next" -- and where apps share a service account the binding check cannot
+    // catch a wrong claim. Say which ID was assumed rather than failing.
+    console.warn(
+      `[@platformatic/world] no application ID configured; assuming "${appId}" from package.json. ` +
+      'Set PLT_WORLD_APP_ID if this is not the application registered with the workflow service.'
+    )
+  }
   const explicitVersion = options?.deploymentVersion ||
     process.env.PLT_WORLD_DEPLOYMENT_VERSION ||
     process.env.PLT_DEPLOYMENT_VERSION

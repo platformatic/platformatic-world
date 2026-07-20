@@ -64,25 +64,46 @@ test('reads from env vars', async () => {
   }
 })
 
-test('requires an explicit application ID in Kubernetes', async () => {
+test('falls back to the package name in Kubernetes, warning which ID it assumed', async () => {
   const fakeSaDir = join(tmpdir(), `plt-world-app-id-test-${process.pid}`)
   mkdirSync(fakeSaDir, { recursive: true })
   writeFileSync(join(fakeSaDir, 'token'), 'fake-sa-token')
   const originalUrl = process.env.PLT_WORLD_SERVICE_URL
   const originalAppId = process.env.PLT_WORLD_APP_ID
   const originalSaPath = process.env.PLT_WORLD_SA_PATH
+  const originalAppName = process.env.PLT_APP_NAME
   process.env.PLT_WORLD_SERVICE_URL = 'http://localhost:9999'
   process.env.PLT_WORLD_SA_PATH = fakeSaDir
   delete process.env.PLT_WORLD_APP_ID
+  delete process.env.PLT_APP_NAME
+
+  const warnings: string[] = []
+  const originalWarn = console.warn
+  console.warn = (msg: string) => { warnings.push(String(msg)) }
 
   try {
-    assert.throws(
-      () => createWorld(),
-      { message: 'World application ID is required in Kubernetes; set options.appId or PLT_WORLD_APP_ID' }
-    )
-    const world = createWorld({ appId: 'explicit-app' })
-    await world.close()
+    // No explicit ID: supported, but the assumed ID must be announced.
+    const fallback = createWorld()
+    await fallback.close()
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /no application ID configured/)
+    assert.match(warnings[0], /PLT_WORLD_APP_ID/)
+
+    // An explicit ID is silent.
+    warnings.length = 0
+    const explicit = createWorld({ appId: 'explicit-app' })
+    await explicit.close()
+    assert.deepEqual(warnings, [])
+
+    // PLT_APP_NAME counts as configured, so it must not warn either.
+    process.env.PLT_APP_NAME = 'from-platform'
+    const viaAppName = createWorld()
+    await viaAppName.close()
+    assert.deepEqual(warnings, [])
   } finally {
+    console.warn = originalWarn
+    if (originalAppName) process.env.PLT_APP_NAME = originalAppName
+    else delete process.env.PLT_APP_NAME
     if (originalUrl) process.env.PLT_WORLD_SERVICE_URL = originalUrl
     else delete process.env.PLT_WORLD_SERVICE_URL
     if (originalAppId) process.env.PLT_WORLD_APP_ID = originalAppId
