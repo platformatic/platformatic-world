@@ -3,9 +3,18 @@ import createLeaderElector from '@platformatic/leader'
 import { decode, encode } from 'cbor-x'
 import { routeMessage } from './router.ts'
 import { dispatchMessage, type DispatchResult } from './dispatcher.ts'
-import { getRetryDelay, isMaxAttempts } from './retry.ts'
+import { getRetryDelay, isMaxAttempts, MAX_ATTEMPTS } from './retry.ts'
 
-const ORPHAN_CHECK_INTERVAL = 60_000
+// How often delivered-but-unacknowledged messages are reclaimed.
+const RECLAIM_CHECK_INTERVAL = 60_000
+// How long a message may stay 'delivered' before it is assumed its executor
+// died and it is redelivered. This bounds a single step, not a whole run: a
+// run may idle for days on a hook without any message outstanding, and that is
+// not a fault. Must exceed the slowest legitimate step (model calls included).
+const DEFAULT_VISIBILITY_TIMEOUT_S = 900
+const VISIBILITY_TIMEOUT_S = Number(process.env.WF_DELIVERY_VISIBILITY_TIMEOUT_S) > 0
+  ? Number(process.env.WF_DELIVERY_VISIBILITY_TIMEOUT_S)
+  : DEFAULT_VISIBILITY_TIMEOUT_S
 // Safety-net poll interval: scheduleNextWakeup() is fire-and-forget to avoid
 // blocking pendingNotify re-runs. When multiple executeOnce() cycles run
 // back-to-back, two concurrent scheduleNextWakeup() calls can race — the
@@ -216,10 +225,89 @@ async function lockRunForFailureFinalization (client: pg.PoolClient, msg: any): 
   )
 }
 
+// A message stuck in 'delivered' means its executor never reported back, most
+// likely because it died mid-step. Nothing else reclaims it: the retry paths
+// only touch 'pending', 'deferred' and 'failed'. Redelivering resumes the run
+// rather than failing it.
+//
+// Deliberately scoped to messages, not runs. A run with no message outstanding
+// is idle, not stuck -- it may be parked on a hook for days -- and inactivity
+// is not a fault in a durable workflow.
+export async function reclaimExpiredDeliveries (
+  client: pg.PoolClient,
+  log: any,
+  visibilityTimeoutS: number = VISIBILITY_TIMEOUT_S
+): Promise<number> {
+  try {
+    // Under the retry ceiling: hand it back to the poller for another attempt.
+    const reclaimed = await client.query(
+      `UPDATE workflow_queue_messages m
+       SET status = 'pending', attempts = m.attempts + 1,
+           delivered_at = NULL, updated_at = NOW()
+       FROM workflow_runs r
+       WHERE m.run_id = r.id
+         AND m.status = 'delivered'
+         AND m.delivered_at < NOW() - make_interval(secs => $1)
+         AND r.status IN ('pending', 'running')
+         AND m.attempts < $2
+       RETURNING m.id, m.run_id, m.queue_name, m.attempts`,
+      [visibilityTimeoutS, MAX_ATTEMPTS]
+    )
+
+    if (reclaimed.rows.length > 0) {
+      log.warn(
+        { count: reclaimed.rows.length, visibilityTimeoutS },
+        'Reclaimed delivered messages whose executor never reported back'
+      )
+    }
+
+    // At the ceiling there is nothing left to retry, so finalize rather than
+    // leave the run running forever.
+    const exhausted = await client.query(
+      `SELECT m.id, m.run_id, m.application_id, m.queue_name, m.deployment_version, m.attempts
+       FROM workflow_queue_messages m
+       JOIN workflow_runs r ON r.id = m.run_id
+       WHERE m.status = 'delivered'
+         AND m.delivered_at < NOW() - make_interval(secs => $1)
+         AND r.status IN ('pending', 'running')
+         AND m.attempts >= $2
+       LIMIT 10`,
+      [visibilityTimeoutS, MAX_ATTEMPTS]
+    )
+
+    for (const msg of exhausted.rows) {
+      await client.query('BEGIN')
+      try {
+        const failure = failureDetail(
+          msg, msg.attempts, 'DELIVERY_TIMEOUT',
+          `Message delivered but never acknowledged within ${visibilityTimeoutS}s, and retries are exhausted`
+        )
+        await lockRunForFailureFinalization(client, msg)
+        await client.query(
+          `UPDATE workflow_queue_messages
+           SET status = 'dead', last_failure = $3, dead_at = NOW(),
+               failure_finalized_at = NOW(), updated_at = NOW()
+           WHERE id = $1 AND application_id = $2 AND status = 'delivered'`,
+          [msg.id, msg.application_id, failure]
+        )
+        await failRun(client, msg, failure)
+        await client.query('COMMIT')
+      } catch (err) {
+        await client.query('ROLLBACK')
+        throw err
+      }
+    }
+    return reclaimed.rows.length
+  } catch (err) {
+    log.error({ err }, 'Delivery reclaim error')
+    return 0
+  }
+}
+
 export function createPoller (pool: pg.Pool, connectionString: string, log: any) {
   let stopped = false
   let deferredTimer: ReturnType<typeof setTimeout> | null = null
-  let orphanTimer: ReturnType<typeof setInterval> | null = null
+  let reclaimTimer: ReturnType<typeof setInterval> | null = null
   let safetyTimer: ReturnType<typeof setInterval> | null = null
   let listenClient: pg.Client | null = null
   let executing = false
@@ -248,7 +336,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   function startPolling (): void {
     stopped = false
     setupListener()
-    orphanTimer = setInterval(checkOrphans, ORPHAN_CHECK_INTERVAL)
+    reclaimTimer = setInterval(runReclaim, RECLAIM_CHECK_INTERVAL)
     safetyTimer = setInterval(() => execute(), SAFETY_POLL_INTERVAL)
     execute()
   }
@@ -256,7 +344,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   function stopPolling (): void {
     stopped = true
     if (deferredTimer) { clearTimeout(deferredTimer); deferredTimer = null }
-    if (orphanTimer) { clearInterval(orphanTimer); orphanTimer = null }
+    if (reclaimTimer) { clearInterval(reclaimTimer); reclaimTimer = null }
     if (safetyTimer) { clearInterval(safetyTimer); safetyTimer = null }
     teardownListener()
   }
@@ -417,44 +505,14 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     }
   }
 
-  async function checkOrphans (): Promise<void> {
+  async function runReclaim (): Promise<void> {
     if (stopped) return
-
     const client = await pool.connect()
     try {
-      const orphans = await client.query(
-        `SELECT id, application_id, deployment_id FROM workflow_runs
-         WHERE status = 'running'
-           AND updated_at < NOW() - INTERVAL '15 minutes'
-           AND id NOT IN (
-             SELECT DISTINCT run_id FROM workflow_queue_messages
-             WHERE status IN ('pending', 'deferred', 'failed')
-           )
-         LIMIT 10`
-      )
-
-      for (const orphan of orphans.rows) {
-        await client.query('BEGIN')
-        try {
-          await client.query(
-            'SELECT id FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
-            [orphan.id, orphan.application_id]
-          )
-          const msg = {
-            run_id: orphan.id,
-            application_id: orphan.application_id,
-            queue_name: '__wkf_workflow_orphaned',
-            deployment_version: orphan.deployment_id,
-          }
-          await failRun(client, msg, failureDetail(msg, 0, 'ORPHANED', 'Run orphaned: no activity for 15 minutes'))
-          await client.query('COMMIT')
-        } catch (err) {
-          await client.query('ROLLBACK')
-          throw err
-        }
-      }
+      const reclaimed = await reclaimExpiredDeliveries(client, log)
+      if (reclaimed > 0) execute()
     } catch (err) {
-      log.error({ err }, 'Orphan check error')
+      log.error({ err }, 'Delivery reclaim error')
     } finally {
       client.release()
     }
