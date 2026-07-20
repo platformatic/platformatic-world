@@ -9,7 +9,10 @@ services:
     ports:
       - '127.0.0.1:5434:5432'
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # postgres:18+ stores data under a major-version subdirectory, so the
+      # mount goes at the parent. Mounting .../data leaves it unused and the
+      # image refuses to start if it finds data there.
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U wf -d workflow']
       interval: 2s

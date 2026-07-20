@@ -78,7 +78,7 @@ test('requires an explicit application ID in Kubernetes', async () => {
   try {
     assert.throws(
       () => createWorld(),
-      { message: 'World application ID is required in Kubernetes; set options.appId or PLT_WORLD_APP_ID' }
+      { message: 'World application ID is required on a managed platform; set options.appId or PLT_WORLD_APP_ID' }
     )
     const world = createWorld({ appId: 'explicit-app' })
     await world.close()

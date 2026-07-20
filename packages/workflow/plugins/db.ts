@@ -1,7 +1,7 @@
 import fp from 'fastify-plugin'
-import { existsSync } from 'node:fs'
 import type { FastifyInstance } from 'fastify'
 import { initDb, decorateDb } from '../lib/db.ts'
+import { saPath, isRunningInK8s, isManagedPlatform } from '../lib/platform.ts'
 import type { AuthConfig } from '../lib/auth/index.ts'
 
 declare module 'fastify' {
@@ -19,24 +19,27 @@ async function dbPlugin (app: FastifyInstance): Promise<void> {
   const pool = await initDb({ connectionString })
   decorateDb(app, pool, connectionString)
 
-  // Detect mode and build auth config
-  const isK8s = existsSync('/var/run/secrets/kubernetes.io/serviceaccount/token')
+  // Two independent axes, both derived from platform-injected facts. K8s
+  // supplies an identity to verify; K8s and ECS both mean ICC provisions
+  // applications, so tenancy applies with or without authentication.
+  const isK8s = isRunningInK8s()
+  const multiTenant = isManagedPlatform()
 
   let authConfig: AuthConfig
 
-  if (isK8s) {
-    const authMode = (process.env.WF_AUTH_MODE || 'k8s-token') as 'api-key' | 'k8s-token' | 'both'
+  if (multiTenant) {
     authConfig = {
-      mode: authMode,
-      k8s: authMode !== 'api-key'
+      multiTenant: true,
+      k8s: isK8s
         ? {
             apiServer: process.env.K8S_API_SERVER || 'https://kubernetes.default.svc',
-            caCert: process.env.K8S_CA_CERT || '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt',
+            caCert: process.env.K8S_CA_CERT || saPath('ca.crt'),
             adminServiceAccount: process.env.K8S_ADMIN_SERVICE_ACCOUNT,
+            saTokenPath: saPath('token'),
           }
         : undefined,
     }
-    app.log.info('Starting in multi-tenant mode (K8s detected)')
+    app.log.info({ authenticated: isK8s }, 'Starting in multi-tenant mode')
   } else {
     const appIdStr = process.env.PLT_WORLD_APP_ID || 'default'
     const result = await pool.query(
@@ -46,8 +49,8 @@ async function dbPlugin (app: FastifyInstance): Promise<void> {
        RETURNING id`,
       [appIdStr]
     )
-    authConfig = { mode: 'none', defaultAppId: result.rows[0].id }
-    app.log.info('Starting in single-tenant mode (no K8s detected)')
+    authConfig = { multiTenant: false, defaultAppId: result.rows[0].id }
+    app.log.info('Starting in single-tenant mode (unmanaged)')
   }
 
   app.decorate('authConfig', authConfig)
