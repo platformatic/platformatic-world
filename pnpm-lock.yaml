@@ -123,7 +123,7 @@ importers:
         version: 3.0.2
       undici:
         specifier: ^8.0.0
-        version: 8.7.0
+        version: 8.9.0
       wattpm:
         specifier: ^3.40.0
         version: 3.62.2(supports-color@10.2.2)
@@ -167,7 +167,7 @@ importers:
         version: 1.6.4
       undici:
         specifier: ^8.0.0
-        version: 8.7.0
+        version: 8.9.0
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -4565,8 +4565,8 @@ packages:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
 
-  undici@8.7.0:
-    resolution: {integrity: sha512-N7iQtfyLhIMOFgQubvmLV26svHpO0bqKnAiWotTQCVKCmWrcGbBotPuW1x+xwYZ2VHdSTVUfPQQnlEt1/LouTQ==}
+  undici@8.9.0:
+    resolution: {integrity: sha512-aWZpUj7XoGonMClx4gdDRfgBjqeA+F473aDmROQQbM9n6PRfK/u1q/a0X4wMTgcHfT8H6fpbt98PFuDUwFg2YA==}
     engines: {node: '>=22.19.0'}
 
   unicorn-magic@0.1.0:
@@ -10381,7 +10381,7 @@ snapshots:
 
   undici@7.29.0: {}
 
-  undici@8.7.0: {}
+  undici@8.9.0: {}
 
   unicorn-magic@0.1.0: {}
 
