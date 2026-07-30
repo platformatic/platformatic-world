@@ -155,13 +155,35 @@ export function createStorage (client: HttpClient) {
 
     hooks: {
       get: async (hookId: string, params?: any) => {
-        const result = await client.get(`/hooks/${hookId}`, buildQuery(params))
-        return restoreEntity(result)
+        try {
+          const result = await client.get(`/hooks/${hookId}`, buildQuery(params))
+          return restoreEntity(result)
+        } catch (err: any) {
+          if (err?.statusCode === 404) {
+            err.name = 'HookNotFoundError'
+            err.hookId = hookId
+          }
+          throw err
+        }
       },
 
       getByToken: async (token: string, params?: any) => {
-        const result = await client.get(`/hooks/by-token/${token}`, buildQuery(params))
-        return restoreEntity(result)
+        try {
+          const result = await client.get(`/hooks/by-token/${token}`, buildQuery(params))
+          return restoreEntity(result)
+        } catch (err: any) {
+          // A missing hook is normal control flow, not a transport failure:
+          // resuming a hook is how callers ask "does this session exist yet?".
+          // HookNotFoundError.is() checks error.name === 'HookNotFoundError',
+          // so without this name the miss is indistinguishable from a real
+          // outage and callers turn a routine "no session yet" into a hard
+          // failure instead of creating one.
+          if (err?.statusCode === 404) {
+            err.name = 'HookNotFoundError'
+            err.token = token
+          }
+          throw err
+        }
       },
 
       list: async (params: any) => {
