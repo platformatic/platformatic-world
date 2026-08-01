@@ -55,8 +55,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/world
       '@workflow/world':
-        specifier: 5.0.0-beta.22
-        version: 5.0.0-beta.22
+        specifier: 5.0.0-beta.23
+        version: 5.0.0-beta.23
       next:
         specifier: ^16.0.0
         version: 16.2.12(@opentelemetry/api@1.9.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1792,6 +1792,9 @@ packages:
 
   '@workflow/world@5.0.0-beta.22':
     resolution: {integrity: sha512-9m//a1EwMiOMhooHj0Y/yR8dM4bXgJfxlBo1yfcdYDmFUvrHLtqOjaZIdB94Zy5V19EiFJIslpWWivQJtAaU8w==}
+
+  '@workflow/world@5.0.0-beta.23':
+    resolution: {integrity: sha512-L7SwNa0fnxcZnu+7TTSbImBH6hvsV4EE2tBVdVv8fdAEqLKrLIFGsLcJuhuL//ZPr7emjLGqOwtFDc+fvrRlmA==}
 
   '@xhmikosr/archive-type@8.1.0':
     resolution: {integrity: sha512-EXOjEbnZFE5c/nFMf4FOrEURVanzHpnkPYmnmr78u02/8hAhE0FMq8p9TK1IM0/bFr5VcyBUY0gfLm8f7dKy+Q==}
@@ -6797,6 +6800,11 @@ snapshots:
       zod: 4.3.6
 
   '@workflow/world@5.0.0-beta.22':
+    dependencies:
+      ulid: 3.0.2
+      zod: 4.3.6
+
+  '@workflow/world@5.0.0-beta.23':
     dependencies:
       ulid: 3.0.2
       zod: 4.3.6
