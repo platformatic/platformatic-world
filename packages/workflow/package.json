@@ -29,7 +29,7 @@
     "@platformatic/leader": "^0.3.0",
     "@platformatic/runtime": "^3.41.0",
     "@platformatic/service": "^3.40.0",
-    "cbor-x": "1.6.4",
+    "cbor-x": "1.6.5",
     "fastify": "^5.3.3",
     "fastify-plugin": "^6.0.0",
     "pg": "^8.16.0",
