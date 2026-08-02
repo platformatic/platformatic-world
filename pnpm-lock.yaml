@@ -102,7 +102,7 @@ importers:
         version: 3.65.0(supports-color@10.2.2)
       '@platformatic/service':
         specifier: ^3.40.0
-        version: 3.63.0(supports-color@10.2.2)
+        version: 3.65.0(supports-color@10.2.2)
       cbor-x:
         specifier: 1.6.5
         version: 1.6.5
@@ -483,9 +483,6 @@ packages:
 
   '@fastify/static@10.1.2':
     resolution: {integrity: sha512-G/g18cG9tLutT/OVyN1AIsHIl9L1UwmJ+S3dkyhVpplIx0nEMicd7RGQ+uJLyhKKF4a3tTcQydccn3Mop1fX+Q==}
-
-  '@fastify/static@9.3.0':
-    resolution: {integrity: sha512-9YMYRpCOtMBrqKYWcqiw7ykOrn4D0jogHpJrFS0KGeSuOwzKMM5/mjj7B0CFLVoQ6htqKYw//Zs7APn9DBq05w==}
 
   '@fastify/swagger@9.8.1':
     resolution: {integrity: sha512-VpHMnqZTY8iBZYJE8WWkbKPrXIYWy2rDfIf5qLr6DzZSpQYZ+KxQVcJFiq/AMlvNwI4gCBd66++iUlxXXGT0IQ==}
@@ -1279,12 +1276,12 @@ packages:
     resolution: {integrity: sha512-Qcfp3Th1ssAbwqDWmX4eg2shrvULu2q4aDs+V01NSV+3GXO4rCAwEqKzl/wBF9/GUZmiUfZI5DMjnUvocsVytw==}
     engines: {node: '>=22.19.0'}
 
-  '@platformatic/scalar-theme@3.63.0':
-    resolution: {integrity: sha512-1+36I288jY0svRfmIDo2c2etIunyUTYNfs5UGOmyAr7pwRwsosSd/nP232Rf2NkGCblgvRalU91V9KqFdV2sRA==}
+  '@platformatic/scalar-theme@3.65.0':
+    resolution: {integrity: sha512-c/LyYOvcued1Mz60KzQwqK7VaSZCrNq6iSD/RMs1ZeenxWdXon5+2kBQkrcAqWagXOhtOkHgdLLszttldx4bdA==}
     engines: {node: '>=22.19.0'}
 
-  '@platformatic/service@3.63.0':
-    resolution: {integrity: sha512-uxruEGIj54OVF8WT9y1mL+uYfGMuz3DTE+4Usq9MDcJxuyJRJ1gxdpJftf7rtRCp1o1W6aEM2Mb0nKA/P0STqw==}
+  '@platformatic/service@3.65.0':
+    resolution: {integrity: sha512-Xu10elsUQiLwgO9IIJbYdwyJrH8X86OkXV0SIcODrjAwKrtYHksPmm23A6bSWv3i2nH1a9YkBXcxXB/ohnV/qg==}
     engines: {node: '>=22.19.0'}
 
   '@platformatic/telemetry@3.63.0':
@@ -2083,6 +2080,10 @@ packages:
     resolution: {integrity: sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==}
     engines: {node: 20 || >=22}
 
+  brace-expansion@5.0.9:
+    resolution: {integrity: sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==}
+    engines: {node: 20 || >=22}
+
   buffer@5.7.1:
     resolution: {integrity: sha512-EHcyIPBQ4BSGlvjB16k5KgAJ27CIsHY/2JBmCRReo48y9rQ3MaUzWX3KVlBa4U7MyX02HdVj0K7C3WaB3ju7FQ==}
 
@@ -2662,11 +2663,14 @@ packages:
   fast-safe-stringify@2.1.1:
     resolution: {integrity: sha512-W+KJc2dmILlPplD/H4K9l9LcAHAfPtP6BY84uVLXQ6Evcz9Lcg33Y2z1IVblT6xdY54PXYVHEv+0Wpq8Io6zkA==}
 
-  fast-uri@2.4.3:
-    resolution: {integrity: sha512-8V8UrSDUkYpi4AXM7Na0G6hctXSaRHBGMuANOotuFdHEFtTdqDTRNfcDczA9WkKODI17o7o10iQvzdMIxXb8eA==}
+  fast-uri@2.4.4:
+    resolution: {integrity: sha512-GntYZbd2KSiFfoZI3Y02rXKihfsPwdWfiHrwKVLuU1i810D0SYw7fCarLxaRO2VvneTrbzCxSz3GnvEfUiApug==}
 
   fast-uri@3.1.4:
     resolution: {integrity: sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==}
+
+  fast-uri@3.1.5:
+    resolution: {integrity: sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==}
 
   fast-uri@4.1.1:
     resolution: {integrity: sha512-YPOs1zD5TG2+EZt+r88LwF6mclA7TPkpwMP7ZN3TO2HiHS8TXvq7QA/17iJsV9dubcLo/f8eEYqMBruyQV21hQ==}
@@ -3433,6 +3437,10 @@ packages:
 
   minimatch@10.2.5:
     resolution: {integrity: sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==}
+    engines: {node: 18 || 20 || >=22}
+
+  minimatch@10.2.6:
+    resolution: {integrity: sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==}
     engines: {node: 18 || 20 || >=22}
 
   minimatch@3.1.5:
@@ -4677,8 +4685,8 @@ packages:
     resolution: {integrity: sha512-4LCcse/U2MHZ63HAJVE+v71o7yOdIe4cZ70Wpf8D/IyjDKYQLV5GD46B+hSTjJsvV5PztjvHoU580EftxjDZFQ==}
     engines: {node: '>=12.20'}
 
-  yoctocolors@2.1.2:
-    resolution: {integrity: sha512-CzhO+pFNo8ajLM2d2IW/R93ipy99LWjtwblvC1RsoSUMZgyLbYFr221TnSNT7GjGdYui6P459mw9JH/g/zW2ug==}
+  yoctocolors@2.2.0:
+    resolution: {integrity: sha512-xYqdZFUK/VYazNl/oCDYN+3WloWQwMfZxBoiNt6qNyk+xfOdi598muWE42rNZFp1kNOiqW936q5RhUdnpqElSg==}
     engines: {node: '>=18'}
 
   zod@4.1.11:
@@ -4953,15 +4961,6 @@ snapshots:
       '@fastify/error': 4.2.0
       '@fastify/send': 4.1.0
       content-disposition: 2.0.1
-      fastify-plugin: 6.0.0
-      fastq: 1.20.1
-      glob: 13.0.6
-
-  '@fastify/static@9.3.0':
-    dependencies:
-      '@fastify/accept-negotiator': 2.0.1
-      '@fastify/send': 4.1.0
-      content-disposition: 1.1.0
       fastify-plugin: 6.0.0
       fastq: 1.20.1
       glob: 13.0.6
@@ -5809,7 +5808,7 @@ snapshots:
       '@platformatic/foundation': 3.63.0(supports-color@10.2.2)
       change-case-all: 2.1.0
       execa: 9.6.1
-      fastify: 5.10.0
+      fastify: 5.11.0
       pino: 9.14.0
       undici: 7.29.0
     transitivePeerDependencies:
@@ -5913,7 +5912,7 @@ snapshots:
       cron: 4.4.0
       debounce: 2.2.0
       fastest-levenshtein: 1.0.16
-      fastify: 5.10.0
+      fastify: 5.11.0
       graphql: 16.14.2
       help-me: 5.0.0
       minimist: 1.2.8
@@ -5973,25 +5972,25 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@platformatic/scalar-theme@3.63.0': {}
+  '@platformatic/scalar-theme@3.65.0': {}
 
-  '@platformatic/service@3.63.0(supports-color@10.2.2)':
+  '@platformatic/service@3.65.0(supports-color@10.2.2)':
     dependencies:
       '@fastify/accepts': 5.0.4
       '@fastify/autoload': 6.5.0
       '@fastify/cors': 11.3.0
       '@fastify/deepmerge': 3.2.1
       '@fastify/error': 4.2.0
-      '@fastify/static': 9.3.0
+      '@fastify/static': 10.1.2
       '@fastify/swagger': 9.8.1(supports-color@10.2.2)
       '@fastify/under-pressure': 9.1.0
-      '@platformatic/basic': 3.63.0(supports-color@10.2.2)
-      '@platformatic/foundation': 3.63.0(supports-color@10.2.2)
-      '@platformatic/generators': 3.63.0(supports-color@10.2.2)
-      '@platformatic/globals': 3.63.0
-      '@platformatic/metrics': 3.63.0
-      '@platformatic/scalar-theme': 3.63.0
-      '@platformatic/telemetry': 3.63.0(supports-color@10.2.2)
+      '@platformatic/basic': 3.65.0(supports-color@10.2.2)
+      '@platformatic/foundation': 3.65.0(supports-color@10.2.2)
+      '@platformatic/generators': 3.65.0(supports-color@10.2.2)
+      '@platformatic/globals': 3.65.0
+      '@platformatic/metrics': 3.65.0
+      '@platformatic/scalar-theme': 3.65.0
+      '@platformatic/telemetry': 3.65.0(supports-color@10.2.2)
       '@scalar/fastify-api-reference': 1.62.5
       '@types/node': 22.20.1
       '@types/ws': 8.18.1
@@ -6004,7 +6003,7 @@ snapshots:
       env-schema: 7.0.0
       execa: 9.6.1
       fast-json-patch: 3.1.1
-      fastify: 5.10.0
+      fastify: 5.11.0
       fastify-plugin: 6.0.0
       graphql: 16.14.2
       help-me: 5.0.0
@@ -7218,7 +7217,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.4
+      fast-uri: 3.1.5
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -7413,6 +7412,10 @@ snapshots:
       balanced-match: 1.0.2
 
   brace-expansion@5.0.8:
+    dependencies:
+      balanced-match: 4.0.4
+
+  brace-expansion@5.0.9:
     dependencies:
       balanced-match: 4.0.4
 
@@ -8091,7 +8094,7 @@ snapshots:
       pretty-ms: 9.3.0
       signal-exit: 4.1.0
       strip-final-newline: 4.0.0
-      yoctocolors: 2.1.2
+      yoctocolors: 2.2.0
 
   express@5.2.1(supports-color@10.2.2):
     dependencies:
@@ -8192,7 +8195,7 @@ snapshots:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       fast-deep-equal: 3.1.3
-      fast-uri: 2.4.3
+      fast-uri: 2.4.4
       json-schema-ref-resolver: 1.0.1
       rfdc: 1.4.1
 
@@ -8213,9 +8216,11 @@ snapshots:
 
   fast-safe-stringify@2.1.1: {}
 
-  fast-uri@2.4.3: {}
+  fast-uri@2.4.4: {}
 
   fast-uri@3.1.4: {}
+
+  fast-uri@3.1.5: {}
 
   fast-uri@4.1.1: {}
 
@@ -8481,7 +8486,7 @@ snapshots:
 
   glob@13.0.6:
     dependencies:
-      minimatch: 10.2.5
+      minimatch: 10.2.6
       minipass: 7.1.3
       path-scurry: 2.0.2
 
@@ -8821,7 +8826,7 @@ snapshots:
   json-schema-resolver@3.0.0(supports-color@10.2.2):
     dependencies:
       debug: 4.4.3(supports-color@10.2.2)
-      fast-uri: 3.1.4
+      fast-uri: 3.1.5
       rfdc: 1.4.1
     transitivePeerDependencies:
       - supports-color
@@ -8992,6 +8997,10 @@ snapshots:
   minimatch@10.2.5:
     dependencies:
       brace-expansion: 5.0.8
+
+  minimatch@10.2.6:
+    dependencies:
+      brace-expansion: 5.0.9
 
   minimatch@3.1.5:
     dependencies:
@@ -9391,7 +9400,7 @@ snapshots:
       on-exit-leak-free: 2.1.2
       pino-abstract-transport: 2.0.0
       pino-std-serializers: 7.1.0
-      process-warning: 5.0.0
+      process-warning: 5.1.0
       quick-format-unescaped: 4.0.4
       real-require: 0.2.0
       safe-stable-stringify: 2.5.0
@@ -10465,7 +10474,7 @@ snapshots:
 
   yocto-queue@1.2.2: {}
 
-  yoctocolors@2.1.2: {}
+  yoctocolors@2.2.0: {}
 
   zod@4.1.11: {}
 
