@@ -1,4 +1,4 @@
-import { experimental_setAttributes as setAttributes } from 'workflow'
+import { setAttributes } from 'workflow'
 
 export async function greet (name: string) {
   'use workflow'
