@@ -11,11 +11,11 @@
   },
   "dependencies": {
     "@platformatic/world": "workspace:*",
-    "@workflow/world": "5.0.0-beta.23",
+    "@workflow/world": "5.0.0-beta.24",
     "next": "^16.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "workflow": "5.0.0-beta.36"
+    "workflow": "5.0.0-beta.39"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
