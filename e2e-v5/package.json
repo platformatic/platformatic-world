@@ -15,7 +15,7 @@
     "next": "^16.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "workflow": "5.0.0-beta.39"
+    "workflow": "5.0.0-beta.40"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
