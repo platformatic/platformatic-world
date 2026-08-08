@@ -123,7 +123,7 @@ importers:
         version: 3.0.2
       undici:
         specifier: ^8.0.0
-        version: 8.9.0
+        version: 8.10.0
       wattpm:
         specifier: ^3.40.0
         version: 3.65.0(supports-color@10.2.2)
@@ -167,7 +167,7 @@ importers:
         version: 1.6.5
       undici:
         specifier: ^8.0.0
-        version: 8.9.0
+        version: 8.10.0
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -1812,9 +1812,6 @@ packages:
 
   '@workflow/world@4.3.1':
     resolution: {integrity: sha512-gT67yCzMsm6SS5+2ho+b6dSd8qknTlDkfHvKnuWWt9fwkvpRr0WLWFOPvzILj3IY/mptDj3pFNDS9a6RWxEqQQ==}
-
-  '@workflow/world@5.0.0-beta.24':
-    resolution: {integrity: sha512-jt7KgonNywQgbq666vUrZyeqICL30+0mJc5u9qQzFTFnB7e9KLeehR3s1pnf/tr+SKTbaZh5lM6xUEYt14ib5g==}
 
   '@workflow/world@5.0.0-beta.25':
     resolution: {integrity: sha512-x5fIve47JYZlGGX97JLol6WfwJak6UrGm5Grl2Ir9gLAqiNfTjBSZb2XTxl2T25kI5uRV3wFKOulK5pjgAWCeQ==}
@@ -4486,8 +4483,8 @@ packages:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
 
-  undici@8.9.0:
-    resolution: {integrity: sha512-aWZpUj7XoGonMClx4gdDRfgBjqeA+F473aDmROQQbM9n6PRfK/u1q/a0X4wMTgcHfT8H6fpbt98PFuDUwFg2YA==}
+  undici@8.10.0:
+    resolution: {integrity: sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==}
     engines: {node: '>=22.19.0'}
 
   unicorn-magic@0.1.0:
@@ -6853,11 +6850,6 @@ snapshots:
       - ws
 
   '@workflow/world@4.3.1':
-    dependencies:
-      ulid: 3.0.2
-      zod: 4.3.6
-
-  '@workflow/world@5.0.0-beta.24':
     dependencies:
       ulid: 3.0.2
       zod: 4.3.6
@@ -10087,7 +10079,7 @@ snapshots:
 
   undici@7.29.0: {}
 
-  undici@8.9.0: {}
+  undici@8.10.0: {}
 
   unicorn-magic@0.1.0: {}
 
