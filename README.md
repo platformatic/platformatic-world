@@ -1,8 +1,10 @@
 # Platformatic World
 
-Deployment-aware workflow orchestration for self-hosted Kubernetes environments.
+Deployment-aware workflow orchestration for self-hosted Kubernetes and AWS ECS environments.
 
 Platformatic World solves the version-pinning problem for [Workflow DevKit](https://docs.platformatic.dev/): when new code deploys, in-flight workflow runs must continue executing on the code version that started them. The Vercel world handles this via Vercel's infrastructure. Platformatic World provides the same guarantees for self-hosted environments by routing queue messages through a central service that pins each run to its originating deployment version.
+
+For ECS-specific deployment, discovery, and security details, see [Platformatic World on ECS](README-ECS.md).
 
 ## Architecture
 
@@ -35,32 +37,33 @@ graph LR
 
 ## Operating Modes
 
-`@platformatic/world` and the Workflow Service run in **two distinct modes**.
-The service auto-detects which one based on the presence of a Kubernetes
-service-account token. Apps just point `PLT_WORLD_SERVICE_URL` at the
-service URL and use the same SDK in both modes.
+`@platformatic/world` and the Workflow Service run in three distinct modes.
+They distinguish Kubernetes through its service-account token and ECS through
+the task metadata endpoint injected into containers. Applications use the same
+SDK in every mode.
 
-| Aspect | Local mode (single-tenant) | Kubernetes mode (with ICC) |
-|---|---|---|
-| Triggered by | No K8s service-account token detected | K8s service-account token present at runtime |
-| Authentication | None | K8s `TokenReview` per request |
-| Apps | One implicit app (`default`) auto-provisioned | One app per K8s ServiceAccount binding, provisioned by ICC |
-| Pod-to-handler registration | App calls `world.start()` on boot | ICC registers handlers via the admin API; `world.start()` is a no-op |
-| Deployment version | Defaults to `local` (or `PLT_WORLD_DEPLOYMENT_VERSION`) | Auto-detected from the pod's `plt.dev/version` label |
-| Admin API | Open (no auth) | Restricted to the configured admin ServiceAccount (e.g. `platformatic:icc`) |
-| Run-pinning across deploys | Yes (every run records the version that started it) | Yes (same mechanism; ICC drives version lifecycle) |
+| Aspect | Local mode | Kubernetes with ICC | ECS with ICC |
+|---|---|---|---|
+| Triggered by | No managed-platform signal | K8s service-account token | ECS task metadata endpoint |
+| Authentication | None | K8s `TokenReview` per request | None; network-trusted |
+| Apps | One implicit app (`default`) | Provisioned by ICC and bound to K8s ServiceAccounts | Provisioned by ICC and selected by URL |
+| Handler registration | App calls `world.start()` | ICC registers the version's K8s Service | ICC registers the version's Cloud Map service |
+| Deployment version | `local` or configured explicitly | Assigned by ICC | Assigned by ICC |
+| Admin API | Open | Restricted to the configured admin ServiceAccount | Open inside the trusted network |
+| Run-pinning across deploys | Yes | Yes; active and expiring versions retain their handlers | Yes; active and expiring versions retain their handlers |
 
 **Local mode** is what you use for development, CI, and the e2e tests in
 this repo. It runs the same code paths as production -- only the auth and
 handler-registration entry points differ.
 
-**Kubernetes mode** is the production deployment under
+**Managed modes** are production deployments under
 [ICC](https://github.com/platformatic/intelligent-command-center). ICC is
-the control plane: it provisions apps, binds K8s ServiceAccounts to apps,
-registers pod handler endpoints, and drives version lifecycle (drain /
-expire). The service itself is identical between the two modes.
+the control plane: it provisions applications, registers version-level service
+endpoints, and drives version lifecycle (drain / expire). On Kubernetes it also
+binds ServiceAccounts to applications for authentication. See the
+[ECS guide](README-ECS.md) for the unauthenticated, network-trusted ECS model.
 
-The diagram at the top shows the K8s-with-ICC mode. In local mode, replace
+The diagram at the top shows a managed ICC mode. In local mode, replace
 the ICC box with nothing -- the service runs standalone against PostgreSQL
 and accepts unauthenticated traffic from apps on the same machine.
 

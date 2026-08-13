@@ -14,7 +14,7 @@ One filesystem check answered three questions on Kubernetes -- whether there is 
 | Tenancy | several applications per workflow service | same |
 | Provisioning | ICC assigns the application ID and version, and registers handlers | same |
 
-**There is no authentication on ECS in this release.** ECS has no service account token, so the workflow service accepts requests from anything that can reach it -- which is what the rest of the internal control plane already does, machinist included. Tenancy is unaffected: applications still cannot read each other's runs, because every data-plane route names its application in the URL and the workflow service rejects one it does not know.
+**There is no authentication on ECS in this release.** ECS has no service account token, so the workflow service accepts requests from anything that can reach it -- which is what the rest of the internal control plane already does, machinist included. Data remains logically scoped by application in SQL, preventing accidental mixing, but this is not access isolation: a caller that can reach the service and knows another application ID can name it in the URL.
 
 Treat the workflow service as an internal service. Put it in a security group that only application tasks and ICC can reach.
 
@@ -97,6 +97,10 @@ Setting `PLT_WORLD_SERVICE_URL` yourself in the deploy environment overrides the
    It does not identify an ECS task. A task replacement or a scale event leaves
    the handler unchanged, while Cloud Map sends each request to a currently
    healthy task belonging to that version's service.
+
+   ICC marks this registration as `serviceScoped`. The workflow service then
+   replaces obsolete machine-scoped rows for that version while leaving every
+   other active or expiring version independently routable.
 
 5. Runs dispatch to that address, pinned to the version that started them. Each
    active or expiring version retains its own handler and therefore executes

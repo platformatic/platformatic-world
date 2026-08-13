@@ -4,6 +4,33 @@ import { routeMessage } from '../queue/router.ts'
 import type pg from 'pg'
 
 describe('queue router', () => {
+  it('routes both active and expiring versions, but not expired versions', async () => {
+    for (const status of ['active', 'expiring']) {
+      const pool = {
+        query: async (sql: string) => {
+          if (sql.includes('workflow_deployment_versions')) return { rows: [{ status }] }
+          return {
+            rows: [{
+              workflow_url: `http://${status}/flow`,
+              step_url: `http://${status}/step`,
+              webhook_url: `http://${status}/webhook`,
+            }],
+          }
+        },
+      } as unknown as pg.Pool
+
+      assert.deepEqual(
+        await routeMessage(pool, 1, `v-${status}`, '__wkf_workflow_test'),
+        { url: `http://${status}/flow` }
+      )
+    }
+
+    const expiredPool = {
+      query: async () => ({ rows: [{ status: 'expired' }] }),
+    } as unknown as pg.Pool
+    assert.equal(await routeMessage(expiredPool, 1, 'v-expired', '__wkf_workflow_test'), null)
+  })
+
   it('deduplicates the selected endpoint URLs before random selection', async () => {
     const pool = {
       query: async (sql: string) => {

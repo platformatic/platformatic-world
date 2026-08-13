@@ -1,6 +1,6 @@
 # @platformatic/world
 
-Drop-in [World](https://useworkflow.dev/docs/deploying) implementation for [Vercel Workflow DevKit](https://useworkflow.dev) on self-hosted Kubernetes. Routes workflow state through a central [Workflow Service](https://github.com/platformatic/platformatic-world/tree/main/packages/workflow) that pins each run to the deployment version that started it.
+Drop-in [World](https://useworkflow.dev/docs/deploying) implementation for [Vercel Workflow DevKit](https://useworkflow.dev) on self-hosted Kubernetes and AWS ECS. Routes workflow state through a central [Workflow Service](https://github.com/platformatic/platformatic-world/tree/main/packages/workflow) that pins each run to the deployment version that started it.
 
 ## Installation
 
@@ -34,7 +34,7 @@ export async function register() {
 
 For other frameworks, call `world.start()` during your server's startup.
 
-In Kubernetes with [ICC](https://icc.platformatic.dev/), handler registration is automatic — `world.start()` is a no-op.
+On Kubernetes or ECS with [ICC](https://icc.platformatic.dev/), handler registration is automatic — `world.start()` is a no-op. See the repository's [ECS guide](../../README-ECS.md) for ECS configuration and its network-trusted security model.
 
 ### Direct usage
 
@@ -61,9 +61,9 @@ High-level factory with automatic config resolution from environment variables.
 |---|---|---|---|
 | `serviceUrl` | `PLT_WORLD_SERVICE_URL` | *required* | Workflow Service URL |
 | `appId` | `PLT_WORLD_APP_ID` | `package.json` name | Application identifier |
-| `deploymentVersion` | `PLT_WORLD_DEPLOYMENT_VERSION` | K8s label or `'local'` | Deployment version |
+| `deploymentVersion` | `PLT_WORLD_DEPLOYMENT_VERSION` | `'local'` | Deployment version assigned by ICC on managed platforms |
 
-In Kubernetes, the deployment version is auto-detected from the pod's `plt.dev/version` label via the K8s API.
+On Kubernetes and ECS, ICC supplies the deployment version through the application environment/runtime context.
 
 ### `createPlatformaticWorld(config)`
 
