@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getSharedContext } from '@platformatic/globals'
 import type { World } from '@workflow/world'
-import { saPath } from './lib/sa-path.ts'
+import { isManagedPlatform } from './lib/platform.ts'
 import { HttpClient } from './lib/client.ts'
 import type { ClientConfig } from './lib/client.ts'
 import { createStorage } from './lib/storage.ts'
@@ -36,7 +36,7 @@ export function createPlatformaticWorld (config: PlatformaticWorldConfig): World
       // (http://<service>.<namespace>.svc.cluster.local:<port>/...) so the
       // workflow service can dispatch cross-namespace.  Registering here with
       // localhost would create a duplicate handler that fails when picked.
-      if (isRunningInK8s()) return
+      if (isManagedPlatform()) return
 
       // Local dev (no ICC) — register with localhost so the workflow service
       // running on the same machine can reach us.
@@ -80,15 +80,6 @@ async function versionFromSharedContext (): Promise<string | undefined> {
   }
 }
 
-function isRunningInK8s (): boolean {
-  try {
-    readFileSync(saPath('token'))
-    return true
-  } catch {
-    return false
-  }
-}
-
 function readAppName (): string {
   try {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
@@ -104,14 +95,14 @@ export function createWorld (options?: Partial<CreateWorldOptions>): World {
     throw new Error('PLT_WORLD_SERVICE_URL environment variable is required')
   }
 
-  const runningInK8s = isRunningInK8s()
+  const managed = isManagedPlatform()
   // PLT_APP_NAME is the platform's own name for the application (watt-extra
   // resolves it the same way), so it is preferred over the package name.
   const explicitAppId = options?.appId ||
     process.env.PLT_WORLD_APP_ID ||
     process.env.PLT_APP_NAME
   const appId = explicitAppId || readAppName()
-  if (runningInK8s && !explicitAppId) {
+  if (managed && !explicitAppId) {
     // The package name is not guaranteed unique -- a Next.js app is often just
     // "next" -- and where apps share a service account the binding check cannot
     // catch a wrong claim. Say which ID was assumed rather than failing.
@@ -129,9 +120,10 @@ export function createWorld (options?: Partial<CreateWorldOptions>): World {
     serviceUrl,
     appId,
     deploymentVersion: explicitVersion || 'local',
-    // In K8s ICC assigns the version, so a 'local' stamp means "not resolved yet" and
-    // must not be used to enqueue (see queue.ts). Standalone/local dev keeps 'local'.
-    requireResolvedVersion: runningInK8s,
+    // On a managed platform ICC assigns the version, so a 'local' stamp means "not
+    // resolved yet" and must not be used to enqueue (see queue.ts). Standalone
+    // keeps 'local'.
+    requireResolvedVersion: managed,
   }
 
   // No explicit version: start at 'local'. When running inside a watt runtime, the

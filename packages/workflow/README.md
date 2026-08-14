@@ -1,6 +1,6 @@
 # @platformatic/workflow
 
-Workflow orchestration service for [Vercel Workflow DevKit](https://useworkflow.dev) on self-hosted Kubernetes. Manages all workflow state (runs, steps, events, hooks, streams) and routes queue messages to the correct deployment version.
+Workflow orchestration service for [Vercel Workflow DevKit](https://useworkflow.dev) on self-hosted Kubernetes and AWS ECS. Manages all workflow state (runs, steps, events, hooks, streams) and routes queue messages to the correct deployment version.
 
 ## Quick Start
 
@@ -33,6 +33,8 @@ Options:
 
 **Multi-tenant** (Kubernetes) — K8s service account token present. All requests authenticated via K8s TokenReview API. Per-application isolation enforced at the SQL level.
 
+**Multi-tenant** (ECS) — ECS task metadata endpoint present. Applications are scoped in SQL, but requests are unauthenticated and callers select the application in the URL. Keep the service reachable only from trusted security groups. See the repository's [ECS guide](../../README-ECS.md).
+
 ## API
 
 All app-scoped endpoints are prefixed with `/api/v1/apps/:appId`.
@@ -63,7 +65,7 @@ All app-scoped endpoints are prefixed with `/api/v1/apps/:appId`.
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/queue` | Enqueue a message (accepts `application/json` or `application/cbor`) |
-| `POST` | `/handlers` | Register queue handler endpoints |
+| `POST` | `/handlers` | Register queue handler endpoints (`serviceScoped: true` for an ICC-managed version Service) |
 | `PUT` | `/runs/:runId/streams/:name` | Write stream chunks |
 | `GET` | `/runs/:runId/streams` | List stream names |
 | `GET` | `/runs/:runId/streams/:name/chunks` | Paginated stream chunks (`?limit`, `?cursor`) |
