@@ -4,7 +4,6 @@ import pg from 'pg'
 import {
   SPEC_VERSION_CURRENT,
   SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT,
-  SPEC_VERSION_SUPPORTS_COMPRESSION,
 } from '@workflow/world'
 import { createPlatformaticWorld } from '@platformatic/world'
 import {
@@ -29,7 +28,7 @@ test('world advertises compression while retaining CBOR support', () => {
     deploymentVersion: DEPLOYMENT_VERSION,
   })
   assert.ok(world.specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  assert.equal(world.specVersion, SPEC_VERSION_SUPPORTS_COMPRESSION)
+  assert.equal(world.specVersion, SPEC_VERSION_CURRENT)
 })
 
 test('health endpoint reports specVersion >= SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT', { timeout: 10_000 }, async () => {

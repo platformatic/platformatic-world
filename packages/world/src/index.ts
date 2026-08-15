@@ -13,20 +13,18 @@ import { createEncryption } from './lib/encryption.ts'
 
 export interface PlatformaticWorldConfig extends ClientConfig, QueueConfig {}
 
-// Declared capability ceiling, not a pin to one runtime. Spec 5 adds
-// gzip-compressed payloads ('gzip' format prefix); we can carry those because
-// storage treats payload bytes opaquely (base64 round-trip, no format
-// inspection), so nothing here needs to decode them. The v5 runtime hard-fails
-// at startup unless the world declares 5; the v4 runtime only reads this for
-// health-check messages and stamps runs from its own SPEC_VERSION_CURRENT, so
-// raising it stays inert for v4.
-const SPEC_VERSION_SUPPORTS_COMPRESSION = 5
+// Declared capability ceiling. Spec 6 (SLOT_IDENTITY) requires event ids to be
+// slot-numbered (`evnt_<26-digit slot>`): the runtime calls requireEventSlot on
+// every event id it loads and fails the run if it cannot parse a slot. Unlike
+// spec 5 (gzip payloads, which storage carries opaquely) this is NOT inert — it
+// obliges the workflow service to emit slot-formatted event ids.
+const SPEC_VERSION_SUPPORTS_SLOT_IDENTITY = 6
 
 export function createPlatformaticWorld (config: PlatformaticWorldConfig): World {
   const client = new HttpClient(config)
 
   return {
-    specVersion: SPEC_VERSION_SUPPORTS_COMPRESSION,
+    specVersion: SPEC_VERSION_SUPPORTS_SLOT_IDENTITY,
     ...createStorage(client),
     ...createQueue(client, config),
     ...createStreamer(client),
