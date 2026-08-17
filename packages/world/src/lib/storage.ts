@@ -6,6 +6,10 @@ function buildQuery (params: any): Record<string, string | undefined> {
   if (params?.pagination?.limit) query.limit = String(params.pagination.limit)
   if (params?.pagination?.cursor) query.cursor = params.pagination.cursor
   if (params?.pagination?.sortOrder) query.sortOrder = params.pagination.sortOrder
+  // events.create snapshot for slot bump-and-report: the highest slot the writer
+  // had loaded (= the slot it expects to land on minus one). The service uses it
+  // to report events committed out-of-band at skipped slots.
+  if (params?.eventCount != null) query.eventCount = String(params.eventCount)
   return query
 }
 
@@ -132,6 +136,12 @@ export function createStorage (client: HttpClient) {
         if (result?.step) restoreEntity(result.step)
         if (result?.hook) restoreEntity(result.hook)
         if (result?.wait) restoreEntity(result.wait)
+        // Bump-and-report: events committed out-of-band at slots this writer
+        // skipped over. Each needs the same Uint8Array/date restoration as the
+        // primary event before the runtime merges them into its log.
+        if (Array.isArray(result?.events)) {
+          for (const e of result.events) restoreEntity(e)
+        }
         return result
       },
 

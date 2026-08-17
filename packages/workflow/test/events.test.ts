@@ -620,3 +620,195 @@ describe('events', () => {
     assert.equal(descFinal.hasMore, false)
   })
 })
+
+describe('slot identity (spec 6)', () => {
+  let ctx: TestContext
+
+  before(async () => {
+    ctx = await setupTest()
+  })
+
+  after(async () => {
+    await teardownTest(ctx)
+  })
+
+  const headers = () => ({ authorization: `Bearer ${ctx.apiKey}` })
+  // Mirror slotToEventId in the events plugin: evnt_ + zero-padded 1-based slot.
+  const slotId = (n: number) => 'evnt_' + String(n).padStart(26, '0')
+
+  async function createRun (specVersion: number, workflowName: string): Promise<any> {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      headers: headers(),
+      payload: {
+        eventType: 'run_created',
+        specVersion,
+        eventData: { deploymentId: 'v1', workflowName, input: {} },
+      },
+    })
+    assert.equal(res.statusCode, 200)
+    return JSON.parse(res.body)
+  }
+
+  function attrSet (runId: string, specVersion: number, correlationId: string, query = '') {
+    return ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events${query}`,
+      headers: headers(),
+      payload: {
+        eventType: 'attr_set',
+        correlationId,
+        specVersion,
+        eventData: { changes: [{ key: correlationId, value: 'v' }], writer: { type: 'workflow' } },
+      },
+    })
+  }
+
+  it('allocates dense, 1-based slot event ids for a spec-6 run', async () => {
+    const created = await createRun(6, 'dense-slot-test')
+    const runId = created.run.runId
+    assert.equal(created.event.eventId, slotId(1))
+
+    assert.equal(JSON.parse((await attrSet(runId, 6, 'a')).body).event.eventId, slotId(2))
+    assert.equal(JSON.parse((await attrSet(runId, 6, 'b')).body).event.eventId, slotId(3))
+
+    const list = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events?sortOrder=asc`,
+      headers: headers(),
+    })).body)
+    assert.deepEqual(list.data.map((e: any) => e.eventId), [slotId(1), slotId(2), slotId(3)])
+  })
+
+  it('keeps legacy serial event ids for runs below spec 6', async () => {
+    const created = await createRun(5, 'legacy-id-test')
+    assert.match(created.event.eventId, /^[0-9]+$/)
+    assert.ok(!created.event.eventId.startsWith('evnt_'))
+
+    const next = JSON.parse((await attrSet(created.run.runId, 5, 'a')).body)
+    assert.match(next.event.eventId, /^[0-9]+$/)
+  })
+
+  it('keeps slots dense under concurrent inserts into one run', async () => {
+    const runId = (await createRun(6, 'concurrent-slot-test')).run.runId
+    const n = 10
+    // step_created takes no run-level lock, so slot allocation here rides purely
+    // on the trigger's per-run serialization.
+    const results = await Promise.all(Array.from({ length: n }, (_, i) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+        headers: headers(),
+        payload: {
+          eventType: 'step_created',
+          correlationId: `c${i}`,
+          specVersion: 6,
+          eventData: { stepName: `step-${i}`, input: {} },
+        },
+      })
+    ))
+    for (const r of results) assert.equal(r.statusCode, 200)
+
+    const slots = (await ctx.app.pg.query(
+      'SELECT slot FROM workflow_events WHERE run_id = $1 ORDER BY slot ASC',
+      [runId]
+    )).rows.map((r: any) => r.slot)
+    // run_created (1) + n step_created — dense 1..n+1, no gaps, no duplicates.
+    assert.deepEqual(slots, Array.from({ length: n + 1 }, (_, i) => i + 1))
+
+    // The API list must return them in slot order, not id order: the SERIAL id
+    // is assigned before the trigger allocates the slot, so a lower id can carry
+    // a higher slot under concurrency. Ordering by id would surface them jumbled.
+    const list = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events?sortOrder=asc&limit=100`,
+      headers: headers(),
+    })).body)
+    assert.deepEqual(
+      list.data.map((e: any) => e.eventId),
+      Array.from({ length: n + 1 }, (_, i) => slotId(i + 1))
+    )
+  })
+
+  it('reports events skipped past a stale eventCount (bump-and-report)', async () => {
+    const runId = (await createRun(6, 'bump-report-test')).run.runId // slot 1
+    await attrSet(runId, 6, 'a') // slot 2
+    await attrSet(runId, 6, 'b') // slot 3
+
+    // Writer's snapshot claims 1 loaded event (expects slot 2) but the log is
+    // already at slot 3. This create lands at slot 4 and reports slots 2-3.
+    const res = JSON.parse((await attrSet(runId, 6, 'c', '?eventCount=1')).body)
+    assert.equal(res.event.eventId, slotId(4))
+    assert.deepEqual(res.events.map((e: any) => e.eventId), [slotId(2), slotId(3)])
+    assert.equal(res.cursor, slotId(3))
+    assert.equal(res.hasMore, false)
+  })
+
+  it('omits the report when eventCount matches the log head', async () => {
+    const runId = (await createRun(6, 'no-bump-test')).run.runId // slot 1
+    // Holds 1 event, expects slot 2, lands exactly on slot 2 — nothing skipped.
+    const res = JSON.parse((await attrSet(runId, 6, 'a', '?eventCount=1')).body)
+    assert.equal(res.event.eventId, slotId(2))
+    assert.equal(res.events, undefined)
+    assert.equal(res.cursor, undefined)
+    assert.equal(res.hasMore, undefined)
+  })
+
+  it('rejects a malformed or negative eventCount and accepts 0', async () => {
+    const runId = (await createRun(6, 'eventcount-validation-test')).run.runId
+    for (const bad of ['1junk', '-1', 'abc']) {
+      const res = await attrSet(runId, 6, `x-${bad}`, `?eventCount=${encodeURIComponent(bad)}`)
+      assert.equal(res.statusCode, 400)
+    }
+    // 0 is a valid empty snapshot.
+    assert.equal((await attrSet(runId, 6, 'zero', '?eventCount=0')).statusCode, 200)
+  })
+
+  it('paginates a spec-6 run ascending and descending by slot', async () => {
+    const runId = (await createRun(6, 'slot-pagination-test')).run.runId // slot 1
+    for (const c of ['a', 'b', 'c', 'd']) await attrSet(runId, 6, c) // slots 2..5
+    const all = [1, 2, 3, 4, 5].map(slotId)
+    const baseUrl = `/api/v1/apps/${ctx.appId}/runs/${runId}/events`
+
+    const asc1 = JSON.parse((await ctx.app.inject({ method: 'GET', url: `${baseUrl}?limit=2&sortOrder=asc`, headers: headers() })).body)
+    assert.deepEqual(asc1.data.map((e: any) => e.eventId), all.slice(0, 2))
+    assert.equal(asc1.cursor, slotId(2))
+    assert.equal(asc1.hasMore, true)
+
+    const asc2 = JSON.parse((await ctx.app.inject({ method: 'GET', url: `${baseUrl}?limit=2&sortOrder=asc&cursor=${asc1.cursor}`, headers: headers() })).body)
+    assert.deepEqual(asc2.data.map((e: any) => e.eventId), all.slice(2, 4))
+
+    const desc1 = JSON.parse((await ctx.app.inject({ method: 'GET', url: `${baseUrl}?limit=2&sortOrder=desc`, headers: headers() })).body)
+    assert.deepEqual(desc1.data.map((e: any) => e.eventId), all.slice(-2).reverse())
+    assert.equal(desc1.cursor, slotId(4))
+  })
+
+  it('paginates correlation events across runs by global id, not run-local slot', async () => {
+    // The same correlation id in two spec-6 runs: each event lands on the same
+    // low slot (2), so a slot-local cursor would drop the second run's event.
+    const corr = `shared-${randomBytes(6).toString('hex')}`
+    const run1 = (await createRun(6, 'corr-multi-run-1')).run.runId
+    const e1 = JSON.parse((await attrSet(run1, 6, corr)).body)
+    const run2 = (await createRun(6, 'corr-multi-run-2')).run.runId
+    const e2 = JSON.parse((await attrSet(run2, 6, corr)).body)
+    assert.equal(e1.event.eventId, slotId(2))
+    assert.equal(e2.event.eventId, slotId(2))
+
+    const baseUrl = `/api/v1/apps/${ctx.appId}/events/by-correlation?correlationId=${corr}`
+    const page1 = JSON.parse((await ctx.app.inject({ method: 'GET', url: `${baseUrl}&limit=1`, headers: headers() })).body)
+    assert.equal(page1.data.length, 1)
+    assert.equal(page1.hasMore, true)
+
+    const page2 = JSON.parse((await ctx.app.inject({ method: 'GET', url: `${baseUrl}&limit=1&cursor=${page1.cursor}`, headers: headers() })).body)
+    assert.equal(page2.data.length, 1)
+    assert.equal(page2.hasMore, false)
+
+    // Both runs' events surfaced across the pages — a run-local slot cursor
+    // would have filtered the second run's slot-2 event out entirely.
+    assert.deepEqual(
+      [page1.data[0].runId, page2.data[0].runId].sort(),
+      [run1, run2].sort()
+    )
+  })
+})

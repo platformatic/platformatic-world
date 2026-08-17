@@ -9,6 +9,76 @@ const ATTRIBUTE_KEY_MAX_LENGTH = 256
 const ATTRIBUTE_VALUE_MAX_BYTES = 256
 const ATTRIBUTE_MAX_PER_RUN = 64
 
+// Slot-based event identity (spec version 6). An event id is `evnt_` followed
+// by the event's dense, 1-based position in its run's log, zero-padded to 26
+// chars. This mirrors @workflow/world's slot-identity module — reimplemented
+// here because the workflow service does not depend on @workflow/world. The
+// slot itself is allocated by a DB trigger (migration 009) so every insert path
+// stays dense; this module only formats/parses it.
+const EVENT_ID_PREFIX = 'evnt_'
+const EVENT_ID_BODY_LENGTH = 26
+// A slot body is 10 leading zeros (the discriminator against a ULID timestamp)
+// followed by 16 decimal digits.
+const SLOT_BODY_RE = /^0{10}[0-9]{16}$/
+
+function slotToEventId (slot: number): string {
+  return EVENT_ID_PREFIX + String(slot).padStart(EVENT_ID_BODY_LENGTH, '0')
+}
+
+// Reads the slot out of a (possibly prefixed) event id, or null when the id is
+// not slot-numbered (a legacy String(id) event id, or a pagination cursor from
+// an older run).
+function eventIdToSlot (eventId: string): number | null {
+  const underscore = eventId.indexOf('_')
+  const body = underscore === -1 ? eventId : eventId.slice(underscore + 1)
+  if (!SLOT_BODY_RE.test(body)) return null
+  const slot = Number(body)
+  return Number.isSafeInteger(slot) && slot >= 1 ? slot : null
+}
+
+// An events-list cursor is the eventId of the previous page's last row. Recover
+// the fence key: a slot event id fences by slot, a legacy serial id by id.
+function parseEventCursor (cursor: string | undefined): { cursorSlot: number | null, cursorId: number | null } {
+  if (!cursor) return { cursorSlot: null, cursorId: null }
+  const slot = eventIdToSlot(cursor)
+  if (slot !== null) return { cursorSlot: slot, cursorId: null }
+  const id = Number.parseInt(cursor, 10)
+  return { cursorSlot: null, cursorId: Number.isInteger(id) ? id : null }
+}
+
+// Cap on how many skipped events a single bump-and-report response carries. If a
+// stale writer is further behind than this, we set hasMore so the runtime drops
+// the (truncated) report and falls back to events.list — never wrong, just a
+// reload.
+const SKIP_REPORT_LIMIT = 500
+
+// Bump-and-report (spec 6): a slot create never fails because its expected slot
+// (eventCount + 1) was taken — it commits at the next free slot. When the
+// committed slot is higher than expected, the writer's snapshot was stale;
+// return the events occupying the slots it skipped so it can fill the gap
+// without a full reload. Shares the events.list response shape. Runs inside the
+// create transaction, so committed = the row this request just wrote and the
+// skipped span is exactly the out-of-band events before it.
+async function buildSkipReport (
+  client: pg.PoolClient, appId: number, runId: string,
+  committedSlot: number | null, eventCount: number | null, resolveData?: string
+): Promise<{ events: any[], cursor: string | null, hasMore: boolean } | null> {
+  if (eventCount == null || committedSlot == null) return null
+  const firstSkipped = eventCount + 1
+  if (committedSlot <= firstSkipped) return null // landed where expected — nothing skipped
+  const { rows } = await client.query(
+    `SELECT * FROM workflow_events
+     WHERE run_id = $1 AND application_id = $2 AND slot >= $3 AND slot < $4
+     ORDER BY slot ASC
+     LIMIT $5`,
+    [runId, appId, firstSkipped, committedSlot, SKIP_REPORT_LIMIT + 1]
+  )
+  const hasMore = rows.length > SKIP_REPORT_LIMIT
+  const events = rows.slice(0, SKIP_REPORT_LIMIT).map((r: any) => formatEvent(r, resolveData))
+  const cursor = events.length > 0 ? events[events.length - 1].eventId : null
+  return { events, cursor, hasMore }
+}
+
 function validateAttribute (key: string, value: string, allowReservedAttributes: boolean): void {
   if (key.length === 0) throw new BadRequest('attribute key must not be empty')
   if (key.length > ATTRIBUTE_KEY_MAX_LENGTH) throw new BadRequest(`attribute key length exceeds limit ${ATTRIBUTE_KEY_MAX_LENGTH}`)
@@ -101,7 +171,9 @@ function decodeData (buf: Buffer | null): unknown {
 
 function formatEvent (row: any, resolveData?: string) {
   const event: any = {
-    eventId: String(row.id),
+    // Spec-6 rows carry a slot; render it as a slot event id. Legacy rows have
+    // slot = NULL and keep the serial-based id for their whole life.
+    eventId: row.slot != null ? slotToEventId(row.slot) : String(row.id),
     runId: row.run_id,
     eventType: row.event_type,
     createdAt: row.created_at,
@@ -281,6 +353,19 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
     const body = request.body as any
     const appId = request.appId
     const resolveData = (request.query as any).resolveData
+    // Writer's loaded-log snapshot for bump-and-report (spec 6). Optional, but
+    // when present must be a non-negative safe integer (0 = empty snapshot).
+    // parseInt is too lax — it would accept "1junk" as 1 and let negatives slip
+    // a bad fence into the skip-report query.
+    const eventCountRaw = (request.query as any).eventCount
+    let eventCount: number | null = null
+    if (eventCountRaw != null && eventCountRaw !== '') {
+      const parsed = Number(eventCountRaw)
+      if (!Number.isSafeInteger(parsed) || parsed < 0) {
+        throw new BadRequest('eventCount must be a non-negative safe integer')
+      }
+      eventCount = parsed
+    }
 
     // Quota checks
     if (body.eventType === 'run_created') {
@@ -918,6 +1003,16 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           throw new BadRequest(`unknown event type: ${body.eventType}`)
       }
 
+      // Bump-and-report: if this create committed at a slot beyond the writer's
+      // stale eventCount snapshot, hand back the events it skipped over.
+      if (result && result.event && result.event.eventId) {
+        const report = await buildSkipReport(
+          client, appId, result.event.runId,
+          eventIdToSlot(result.event.eventId), eventCount, resolveData
+        )
+        if (report) Object.assign(result, report)
+      }
+
       await client.query('COMMIT')
       return result
     } catch (err) {
@@ -935,16 +1030,23 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
     const appId = request.appId
     const limit = Math.min(parseInt(query.limit || '100', 10), 1000)
     const sortOrder = query.sortOrder === 'desc' ? 'DESC' : 'ASC'
-    const cursor = query.cursor ? parseInt(query.cursor, 10) : null
+    // The cursor is the eventId of the last row of the previous page (see
+    // nextCursor below). A slot event id fences by slot; a legacy serial id
+    // fences by id. Order by the SAME identity as the fence — COALESCE(slot,id):
+    // the SERIAL id is assigned before the trigger allocates the slot, so under
+    // concurrency a lower id can carry a higher slot. Ordering by id would then
+    // return slots out of order and disagree with the slot cursor.
+    const { cursorSlot, cursorId } = parseEventCursor(query.cursor)
     const cursorOperator = sortOrder === 'DESC' ? '<' : '>'
 
     const result = await app.pg.query(
       `SELECT * FROM workflow_events
        WHERE run_id = $1 AND application_id = $2
-         AND ($3::int IS NULL OR id ${cursorOperator} $3)
-       ORDER BY id ${sortOrder}
-       LIMIT $4`,
-      [runId, appId, cursor, limit + 1]
+         AND ($3::bigint IS NULL OR slot ${cursorOperator} $3)
+         AND ($4::int IS NULL OR id ${cursorOperator} $4)
+       ORDER BY COALESCE(slot::bigint, id::bigint) ${sortOrder}
+       LIMIT $5`,
+      [runId, appId, cursorSlot, cursorId, limit + 1]
     )
 
     const hasMore = result.rows.length > limit
@@ -966,7 +1068,13 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
     const appId = request.appId
     const limit = Math.min(parseInt(query.limit || '100', 10), 1000)
     const sortOrder = query.sortOrder === 'desc' ? 'DESC' : 'ASC'
-    const cursor = query.cursor ? parseInt(query.cursor, 10) : null
+    // This endpoint spans the whole application (a correlation id is not
+    // globally unique and may match events across runs), so it fences on the
+    // global serial id, NOT the slot — slots restart at 1 per run and would
+    // wrongly filter another run's events. The cursor is the opaque global id
+    // of the last row, decoupled from the (slot-formatted) eventId.
+    const parsedCursor = query.cursor ? Number.parseInt(query.cursor, 10) : NaN
+    const cursorId = Number.isInteger(parsedCursor) ? parsedCursor : null
     const cursorOperator = sortOrder === 'DESC' ? '<' : '>'
 
     const result = await app.pg.query(
@@ -975,12 +1083,13 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
          AND ($3::int IS NULL OR id ${cursorOperator} $3)
        ORDER BY id ${sortOrder}
        LIMIT $4`,
-      [appId, query.correlationId, cursor, limit + 1]
+      [appId, query.correlationId, cursorId, limit + 1]
     )
 
+    const pageRows = result.rows.slice(0, limit)
     const hasMore = result.rows.length > limit
-    const data = result.rows.slice(0, limit).map(row => formatEvent(row, query.resolveData))
-    const nextCursor = data.length > 0 ? data[data.length - 1].eventId : query.cursor ?? null
+    const data = pageRows.map(row => formatEvent(row, query.resolveData))
+    const nextCursor = pageRows.length > 0 ? String(pageRows[pageRows.length - 1].id) : query.cursor ?? null
 
     return { data, cursor: nextCursor, hasMore }
   })
