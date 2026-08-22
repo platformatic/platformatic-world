@@ -21,8 +21,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/world
       '@workflow/world':
-        specifier: 4.3.1
-        version: 4.3.1
+        specifier: 4.4.0
+        version: 4.4.0
       next:
         specifier: ^16.0.0
         version: 16.3.1(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -173,8 +173,8 @@ importers:
         specifier: ^24.0.0
         version: 24.13.3
       '@workflow/world':
-        specifier: 4.3.1
-        version: 4.3.1
+        specifier: 4.4.0
+        version: 4.4.0
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -1800,6 +1800,9 @@ packages:
   '@workflow/world@4.3.1':
     resolution: {integrity: sha512-gT67yCzMsm6SS5+2ho+b6dSd8qknTlDkfHvKnuWWt9fwkvpRr0WLWFOPvzILj3IY/mptDj3pFNDS9a6RWxEqQQ==}
 
+  '@workflow/world@4.4.0':
+    resolution: {integrity: sha512-rlq2qr0VFWG3YYqMpD9k95Tz5h5zqr24Bg8PheZ+rJgkgWZBXWLHS5BkiTA7K3l58NC8M78qkMGakU2/gb3Aag==}
+
   '@workflow/world@5.0.0-beta.27':
     resolution: {integrity: sha512-6+cpxAKgKuIO7khpTZFs9WVTTt8CVXWL8+QTz8VQJFtjg9QF1Kfc3bHPpzj1j6jjQCW6X0pF7CsQGSpLKuL9gw==}
 
@@ -2526,6 +2529,7 @@ packages:
   eslint@9.39.5:
     resolution: {integrity: sha512-DgZS62aPLXKlnxILS/AYCoRvHaZeXceIzlXPkkGGzJWSow1aEk0lbTlxUSlyjC8jcaKxAdOnTDz+o1JFSBsyjw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
@@ -6858,6 +6862,11 @@ snapshots:
       - utf-8-validate
 
   '@workflow/world@4.3.1':
+    dependencies:
+      ulid: 3.0.2
+      zod: 4.3.6
+
+  '@workflow/world@4.4.0':
     dependencies:
       ulid: 3.0.2
       zod: 4.3.6
