@@ -75,7 +75,7 @@ importers:
         version: 24.13.3
       '@types/pg':
         specifier: ^8.18.0
-        version: 8.21.0
+        version: 8.23.1
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.18
@@ -133,7 +133,7 @@ importers:
         version: 24.13.3
       '@types/pg':
         specifier: ^8.15.4
-        version: 8.21.0
+        version: 8.23.1
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -1504,8 +1504,8 @@ packages:
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
-  '@types/pg@8.21.0':
-    resolution: {integrity: sha512-AYdtudzabjLZgVgRZmAnU8bAnVUXzuJX2IYHeSIiIHm68olD+LgQYCGWdtcNYnP0uq9c4S4NibVG3Ni7VbKW7Q==}
+  '@types/pg@8.23.1':
+    resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
   '@types/react@19.2.18':
     resolution: {integrity: sha512-AnzbBERsrLKtk2XSfTbYRLjQPdy116Sty4q+T+Bp3IC4l6jNBvreVPAHmpq9qhXQM7CXZPjLVmGMw9sy+hxQ3w==}
@@ -1796,9 +1796,6 @@ packages:
     peerDependenciesMeta:
       '@opentelemetry/api':
         optional: true
-
-  '@workflow/world@4.3.1':
-    resolution: {integrity: sha512-gT67yCzMsm6SS5+2ho+b6dSd8qknTlDkfHvKnuWWt9fwkvpRr0WLWFOPvzILj3IY/mptDj3pFNDS9a6RWxEqQQ==}
 
   '@workflow/world@4.4.0':
     resolution: {integrity: sha512-rlq2qr0VFWG3YYqMpD9k95Tz5h5zqr24Bg8PheZ+rJgkgWZBXWLHS5BkiTA7K3l58NC8M78qkMGakU2/gb3Aag==}
@@ -6173,7 +6170,7 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
-  '@types/pg@8.21.0':
+  '@types/pg@8.23.1':
     dependencies:
       '@types/node': 24.13.3
       pg-protocol: 1.16.0
@@ -6860,11 +6857,6 @@ snapshots:
       - '@aws-sdk/credential-provider-web-identity'
       - bufferutil
       - utf-8-validate
-
-  '@workflow/world@4.3.1':
-    dependencies:
-      ulid: 3.0.2
-      zod: 4.3.6
 
   '@workflow/world@4.4.0':
     dependencies:
