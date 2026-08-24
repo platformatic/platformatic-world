@@ -812,3 +812,84 @@ describe('slot identity (spec 6)', () => {
     )
   })
 })
+
+describe('sealed log (spec 7)', () => {
+  let ctx: TestContext
+
+  before(async () => {
+    ctx = await setupTest()
+  })
+
+  after(async () => {
+    await teardownTest(ctx)
+  })
+
+  const headers = () => ({ authorization: `Bearer ${ctx.apiKey}` })
+  const slotId = (n: number) => 'evnt_' + String(n).padStart(26, '0')
+
+  async function createRun (specVersion: number, workflowName: string): Promise<any> {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      headers: headers(),
+      payload: {
+        eventType: 'run_created',
+        specVersion,
+        eventData: { deploymentId: 'v1', workflowName, input: {} },
+      },
+    })
+    assert.equal(res.statusCode, 200)
+    return JSON.parse(res.body)
+  }
+
+  it('allocates slot event ids for spec-7 runs', async () => {
+    const created = await createRun(7, 'sealed-log-slot-test')
+    assert.equal(created.event.eventId, slotId(1))
+    assert.equal(created.run.specVersion, 7)
+
+    const second = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${created.run.runId}/events`,
+      headers: headers(),
+      payload: {
+        eventType: 'attr_set',
+        correlationId: 'a',
+        specVersion: 7,
+        eventData: { changes: [{ key: 'k', value: 'v' }], writer: { type: 'workflow' } },
+      },
+    })
+    assert.equal(JSON.parse(second.body).event.eventId, slotId(2))
+  })
+
+  it('reads back a noop event without choking on the unknown type', async () => {
+    // Simulate a noop written by another backend.
+    const created = await createRun(7, 'noop-read-test')
+    const runId = created.run.runId
+    const appRow = await ctx.app.pg.query('SELECT application_id FROM workflow_runs WHERE id = $1', [runId])
+    await ctx.app.pg.query(
+      `INSERT INTO workflow_events (run_id, application_id, event_type, event_data, spec_version)
+       VALUES ($1, $2, 'noop', $3, 7)`,
+      [runId, appRow.rows[0].application_id, Buffer.from(JSON.stringify({ sealed: true }))]
+    )
+
+    const list = JSON.parse((await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events?sortOrder=asc`,
+      headers: headers(),
+    })).body)
+    assert.deepEqual(list.data.map((e: any) => e.eventType), ['run_created', 'noop'])
+    assert.deepEqual(list.data.map((e: any) => e.eventId), [slotId(1), slotId(2)])
+    assert.deepEqual(list.data[1].eventData, { sealed: true })
+  })
+
+  it('rejects a client-created noop (backend-only event type)', async () => {
+    const runId = (await createRun(7, 'noop-not-user-creatable')).run.runId
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`,
+      headers: headers(),
+      payload: { eventType: 'noop', specVersion: 7, eventData: { sealed: true } },
+    })
+    assert.equal(res.statusCode, 400)
+  })
+})

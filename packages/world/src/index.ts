@@ -13,18 +13,41 @@ import { createEncryption } from './lib/encryption.ts'
 
 export interface PlatformaticWorldConfig extends ClientConfig, QueueConfig {}
 
-// Declared capability ceiling. Spec 6 (SLOT_IDENTITY) requires event ids to be
-// slot-numbered (`evnt_<26-digit slot>`): the runtime calls requireEventSlot on
-// every event id it loads and fails the run if it cannot parse a slot. Unlike
-// spec 5 (gzip payloads, which storage carries opaquely) this is NOT inert — it
-// obliges the workflow service to emit slot-formatted event ids.
+// Spec 6 requires slot-numbered event ids, provided by migration 009.
 const SPEC_VERSION_SUPPORTS_SLOT_IDENTITY = 6
+// Atomic slot allocation keeps the log dense, so spec 7 needs no noop writer.
+// The read path still passes through backend-created noop events.
+const SPEC_VERSION_SUPPORTS_SEALED_LOG = 7
+
+// Reimplemented because the type-only @workflow/world dependency is pinned to v4.
+const warnedEnvValues = new Set<string>()
+
+// Match the SDK flag semantics, including one warning per invalid value.
+function envFlag (name: string, fallback: boolean, env: NodeJS.ProcessEnv): boolean {
+  const raw = env[name]
+  if (raw === undefined || raw === '') return fallback
+  const normalized = raw.toLowerCase()
+  if (normalized === '0' || normalized === 'false') return false
+  if (normalized === '1' || normalized === 'true') return true
+  const key = `${name}=${raw}`
+  if (!warnedEnvValues.has(key)) {
+    warnedEnvValues.add(key)
+    console.warn(`[workflow] Ignoring ${name}: expected 0/1/true/false; using default ${fallback}`)
+  }
+  return fallback
+}
+
+function mintedSpecVersion (env: NodeJS.ProcessEnv = process.env): number {
+  return envFlag('WORKFLOW_SEALED_LOG', true, env)
+    ? SPEC_VERSION_SUPPORTS_SEALED_LOG
+    : SPEC_VERSION_SUPPORTS_SLOT_IDENTITY
+}
 
 export function createPlatformaticWorld (config: PlatformaticWorldConfig): World {
   const client = new HttpClient(config)
 
   return {
-    specVersion: SPEC_VERSION_SUPPORTS_SLOT_IDENTITY,
+    specVersion: mintedSpecVersion(),
     ...createStorage(client),
     ...createQueue(client, config),
     ...createStreamer(client),
