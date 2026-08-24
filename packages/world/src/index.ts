@@ -13,33 +13,16 @@ import { createEncryption } from './lib/encryption.ts'
 
 export interface PlatformaticWorldConfig extends ClientConfig, QueueConfig {}
 
-// Spec 6 (SLOT_IDENTITY) requires event ids to be slot-numbered
-// (`evnt_<26-digit slot>`): the runtime calls requireEventSlot on every event id
-// it loads and fails the run if it cannot parse a slot. The workflow service
-// emits those ids (migration 009).
+// Spec 6 requires slot-numbered event ids, provided by migration 009.
 const SPEC_VERSION_SUPPORTS_SLOT_IDENTITY = 6
-// Spec 7 (SEALED_LOG) is a *reader* contract: it says a reader understands that
-// a `noop` event may occupy a slot whose writer died, and skips it during replay
-// without advancing the deterministic clock. The obligation to seal such holes
-// falls only on a World that pre-assigns slot positions ahead of the commit that
-// fills them. Ours allocates each slot in the same transaction that occupies it
-// (migration 009's per-run advisory lock), so its log is a gap-free prefix by
-// construction: there is nothing to seal and it never emits a noop. That makes
-// it spec-7 compliant without a sequencer. The read path still tolerates `noop`
-// should one ever appear (e.g. a run created by another World).
+// Atomic slot allocation keeps the log dense, so spec 7 needs no noop writer.
+// The read path still passes through backend-created noop events.
 const SPEC_VERSION_SUPPORTS_SEALED_LOG = 7
 
-// Mirrors the SDK's mintedSpecVersion()/WORKFLOW_SEALED_LOG kill switch: opting
-// out stamps 6 instead of 7. Kept in lockstep so a rollback flips both halves.
-// Reimplemented rather than imported because @workflow/world is a type-only
-// devDep here (and pinned to the v4 line, which predates the helper), so the
-// published package must not gain a runtime dependency on it.
+// Reimplemented because the type-only @workflow/world dependency is pinned to v4.
 const warnedEnvValues = new Set<string>()
 
-// Matches the SDK's envFlag: unset/empty takes the fallback, 0/false and
-// 1/true are honoured, and anything else warns once before falling back. The
-// warning matters most during an emergency rollback — a typo'd
-// WORKFLOW_SEALED_LOG would otherwise silently keep the sealed log on.
+// Match the SDK flag semantics, including one warning per invalid value.
 function envFlag (name: string, fallback: boolean, env: NodeJS.ProcessEnv): boolean {
   const raw = env[name]
   if (raw === undefined || raw === '') return fallback

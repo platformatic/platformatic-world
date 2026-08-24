@@ -843,10 +843,6 @@ describe('sealed log (spec 7)', () => {
   }
 
   it('allocates slot event ids for spec-7 runs', async () => {
-    // Spec 7 keeps slot identity; the slot trigger gates on spec_version >= 6,
-    // so a spec-7 run gets the same dense allocation as a spec-6 one. Allocating
-    // at the commit that fills the slot is what makes this log a gap-free prefix
-    // — and therefore spec-7 conformant with nothing to seal.
     const created = await createRun(7, 'sealed-log-slot-test')
     assert.equal(created.event.eventId, slotId(1))
     assert.equal(created.run.specVersion, 7)
@@ -866,10 +862,7 @@ describe('sealed log (spec 7)', () => {
   })
 
   it('reads back a noop event without choking on the unknown type', async () => {
-    // Our backend never writes a noop (it allocates at commit, so it has no
-    // abandoned slots to seal), but a run created by another World can carry
-    // one. The read path must pass it through so the runtime can skip it during
-    // replay rather than fail to parse it.
+    // Simulate a noop written by another backend.
     const created = await createRun(7, 'noop-read-test')
     const runId = created.run.runId
     const appRow = await ctx.app.pg.query('SELECT application_id FROM workflow_runs WHERE id = $1', [runId])
@@ -885,8 +878,6 @@ describe('sealed log (spec 7)', () => {
       headers: headers(),
     })).body)
     assert.deepEqual(list.data.map((e: any) => e.eventType), ['run_created', 'noop'])
-    // The noop takes a real slot, so the log stays dense and the reader's
-    // density check still sees a contiguous prefix.
     assert.deepEqual(list.data.map((e: any) => e.eventId), [slotId(1), slotId(2)])
     assert.deepEqual(list.data[1].eventData, { sealed: true })
   })

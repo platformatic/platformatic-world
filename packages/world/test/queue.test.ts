@@ -259,10 +259,7 @@ test('world declares specVersion 7 (sealed log)', () => {
     deploymentVersion: 'v1',
   })
   assert.ok(world.specVersion > SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  // Literal, not SPEC_VERSION_SUPPORTS_SEALED_LOG: this package's @workflow/world
-  // devDep is the v4 line, which doesn't export that constant, and it's a
-  // type-only dep we don't want to turn into a runtime value import. This is the
-  // world's declared capability ceiling — keep it pinned so a change is deliberate.
+  // The v4 type-only dependency does not export the spec 7 constant.
   assert.equal(world.specVersion, 7)
 })
 
@@ -278,7 +275,6 @@ test('WORKFLOW_SEALED_LOG kill switch stamps specVersion 6', () => {
       process.env.WORKFLOW_SEALED_LOG = off
       assert.equal(build(), 6, `${off} should opt out of the sealed log`)
     }
-    // Explicitly on, and unset/empty, keep the default silently.
     for (const on of ['1', 'true', '']) {
       process.env.WORKFLOW_SEALED_LOG = on
       assert.equal(build(), 7, `${JSON.stringify(on)} should keep the sealed log`)
@@ -292,8 +288,6 @@ test('WORKFLOW_SEALED_LOG kill switch stamps specVersion 6', () => {
 })
 
 test('an unparseable WORKFLOW_SEALED_LOG warns once and keeps the default', () => {
-  // A typo during an emergency rollback must not silently leave the sealed log
-  // on: mirror the SDK's envFlag, which warns once per distinct bad value.
   const previous = process.env.WORKFLOW_SEALED_LOG
   const originalWarn = console.warn
   const warnings: string[] = []
@@ -309,7 +303,6 @@ test('an unparseable WORKFLOW_SEALED_LOG warns once and keeps the default', () =
     assert.equal(warnings.length, 1)
     assert.match(warnings[0], /WORKFLOW_SEALED_LOG/)
     assert.match(warnings[0], /expected 0\/1\/true\/false/)
-    // Same bad value again: still just the one warning.
     assert.equal(build(), 7)
     assert.equal(warnings.length, 1)
   } finally {
