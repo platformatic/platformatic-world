@@ -252,18 +252,71 @@ test('createQueueHandler accepts a health check for the alternate endpoint', asy
   await world.close!()
 })
 
-test('world declares specVersion 6 (slot identity)', () => {
+test('world declares specVersion 7 (sealed log)', () => {
   const world = createPlatformaticWorld({
     serviceUrl: 'http://localhost:9999',
     appId: 'app',
     deploymentVersion: 'v1',
   })
   assert.ok(world.specVersion > SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  // Literal, not SPEC_VERSION_SUPPORTS_SLOT_IDENTITY: this package's @workflow/world
+  // Literal, not SPEC_VERSION_SUPPORTS_SEALED_LOG: this package's @workflow/world
   // devDep is the v4 line, which doesn't export that constant, and it's a
   // type-only dep we don't want to turn into a runtime value import. This is the
   // world's declared capability ceiling — keep it pinned so a change is deliberate.
-  assert.equal(world.specVersion, 6)
+  assert.equal(world.specVersion, 7)
+})
+
+test('WORKFLOW_SEALED_LOG kill switch stamps specVersion 6', () => {
+  const previous = process.env.WORKFLOW_SEALED_LOG
+  const build = () => createPlatformaticWorld({
+    serviceUrl: 'http://localhost:9999',
+    appId: 'app',
+    deploymentVersion: 'v1',
+  }).specVersion
+  try {
+    for (const off of ['0', 'false', 'FALSE']) {
+      process.env.WORKFLOW_SEALED_LOG = off
+      assert.equal(build(), 6, `${off} should opt out of the sealed log`)
+    }
+    // Explicitly on, and unset/empty, keep the default silently.
+    for (const on of ['1', 'true', '']) {
+      process.env.WORKFLOW_SEALED_LOG = on
+      assert.equal(build(), 7, `${JSON.stringify(on)} should keep the sealed log`)
+    }
+    delete process.env.WORKFLOW_SEALED_LOG
+    assert.equal(build(), 7)
+  } finally {
+    if (previous === undefined) delete process.env.WORKFLOW_SEALED_LOG
+    else process.env.WORKFLOW_SEALED_LOG = previous
+  }
+})
+
+test('an unparseable WORKFLOW_SEALED_LOG warns once and keeps the default', () => {
+  // A typo during an emergency rollback must not silently leave the sealed log
+  // on: mirror the SDK's envFlag, which warns once per distinct bad value.
+  const previous = process.env.WORKFLOW_SEALED_LOG
+  const originalWarn = console.warn
+  const warnings: string[] = []
+  console.warn = (...args: unknown[]) => { warnings.push(args.join(' ')) }
+  try {
+    process.env.WORKFLOW_SEALED_LOG = 'nonsense'
+    const build = () => createPlatformaticWorld({
+      serviceUrl: 'http://localhost:9999',
+      appId: 'app',
+      deploymentVersion: 'v1',
+    }).specVersion
+    assert.equal(build(), 7)
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /WORKFLOW_SEALED_LOG/)
+    assert.match(warnings[0], /expected 0\/1\/true\/false/)
+    // Same bad value again: still just the one warning.
+    assert.equal(build(), 7)
+    assert.equal(warnings.length, 1)
+  } finally {
+    console.warn = originalWarn
+    if (previous === undefined) delete process.env.WORKFLOW_SEALED_LOG
+    else process.env.WORKFLOW_SEALED_LOG = previous
+  }
 })
 
 test('HTTP 400 errors are classified as WorkflowWorldError', async () => {
