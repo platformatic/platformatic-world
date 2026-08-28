@@ -233,6 +233,25 @@ describe('spec alignment', () => {
     // A namespace must be lowercase alphanumeric starting with a letter.
     assert.ok(!isWorkflowQueue('__9bad_wkf_workflow_greet'))
 
+    // An invalid WORKFLOW_QUEUE_NAMESPACE must fail loudly where the prefix is
+    // built (as the spec's getQueueTopicPrefix does), not silently produce a
+    // name that routes to the webhook handler.
+    const { workflowQueueName } = await import('../queue/names.ts')
+    const previousNs = process.env.WORKFLOW_QUEUE_NAMESPACE
+    try {
+      process.env.WORKFLOW_QUEUE_NAMESPACE = 'acme'
+      assert.equal(workflowQueueName('greet'), '__acme_wkf_workflow_greet')
+      for (const bad of ['Bad_Name', '9lives', 'has-dash', 'UPPER']) {
+        process.env.WORKFLOW_QUEUE_NAMESPACE = bad
+        assert.throws(() => workflowQueueName('greet'), /WORKFLOW_QUEUE_NAMESPACE/)
+      }
+      delete process.env.WORKFLOW_QUEUE_NAMESPACE
+      assert.equal(workflowQueueName('greet'), '__wkf_workflow_greet')
+    } finally {
+      if (previousNs === undefined) delete process.env.WORKFLOW_QUEUE_NAMESPACE
+      else process.env.WORKFLOW_QUEUE_NAMESPACE = previousNs
+    }
+
     // A continuation stays in the namespace the original arrived on.
     assert.equal(workflowQueueNameLike('__acme_wkf_workflow_greet', 'other'), '__acme_wkf_workflow_other')
     assert.equal(workflowQueueNameLike('__acme_wkf_step_add', 'other'), '__acme_wkf_workflow_other')
@@ -281,5 +300,37 @@ describe('spec alignment', () => {
       },
     })
     assert.equal(draining.statusCode, 201)
+  })
+
+  it('still dedupes an already-accepted message after its version expires', async () => {
+    // A retry of a message we already enqueued must answer 409, which the SDK
+    // reads as successful deduplication. Answering 410 would tell it the
+    // delivery is terminally undeliverable and could fail a healthy run.
+    const appRow = await ctx.app.pg.query(
+      'SELECT id FROM workflow_applications WHERE app_id = $1', [ctx.appId]
+    )
+    const key = `idem-${randomBytes(8).toString('hex')}`
+    const send = () => ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/queue`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+      payload: {
+        queueName: '__wkf_workflow_dedupe-after-expiry',
+        message: { runId: 'wrun_dedupe' },
+        deploymentId: 'v-dedupe',
+        idempotencyKey: key,
+      },
+    })
+
+    assert.equal((await send()).statusCode, 201)
+
+    await ctx.app.pg.query(
+      `INSERT INTO workflow_deployment_versions (application_id, deployment_version, status)
+       VALUES ($1, 'v-dedupe', 'expired')
+       ON CONFLICT (application_id, deployment_version) DO UPDATE SET status = 'expired'`,
+      [appRow.rows[0].id]
+    )
+
+    assert.equal((await send()).statusCode, 409)
   })
 })

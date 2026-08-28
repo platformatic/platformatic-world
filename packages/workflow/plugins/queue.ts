@@ -38,6 +38,16 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
 
     await checkQueueRateLimit(app, appId)
 
+    if (envelope.idempotencyKey) {
+      const existing = await app.pg.query(
+        'SELECT id FROM workflow_queue_messages WHERE idempotency_key = $1',
+        [envelope.idempotencyKey]
+      )
+      if (existing.rows.length > 0) {
+        throw new DuplicateIdempotencyKey(envelope.idempotencyKey)
+      }
+    }
+
     // Fail fast when the target deployment version is expired. routeMessage()
     // already refuses to dispatch to an expired version, so accepting the
     // message here only buys it ten doomed delivery attempts before the poller
@@ -52,16 +62,6 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
         [appId, deploymentVersion]
       )
       if (version.rows[0]?.status === 'expired') throw new VersionExpired(deploymentVersion)
-    }
-
-    if (envelope.idempotencyKey) {
-      const existing = await app.pg.query(
-        'SELECT id FROM workflow_queue_messages WHERE idempotency_key = $1',
-        [envelope.idempotencyKey]
-      )
-      if (existing.rows.length > 0) {
-        throw new DuplicateIdempotencyKey(envelope.idempotencyKey)
-      }
     }
 
     // For cbor, we store the encoded message bytes so dispatch can forward

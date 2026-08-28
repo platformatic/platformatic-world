@@ -35,13 +35,27 @@ export function workflowNameFromQueue (queueName: string): string | undefined {
   return WORKFLOW_QUEUE_RE.exec(queueName)?.[1]
 }
 
+// Spec: /^[a-z][a-z0-9]*$/
+const QUEUE_NAMESPACE_RE = /^[a-z][a-z0-9]*$/
+
+// Mirrors the spec's resolveQueueNamespace: reads, does not validate.
 export function resolveQueueNamespace (namespace?: string): string | undefined {
   return namespace ?? process.env.WORKFLOW_QUEUE_NAMESPACE ?? undefined
 }
 
 export function workflowQueueName (workflowName: string, namespace?: string): string {
   const ns = resolveQueueNamespace(namespace)
-  return ns ? `__${ns}_wkf_workflow_${workflowName}` : `__wkf_workflow_${workflowName}`
+  if (ns === undefined) return `__wkf_workflow_${workflowName}`
+  // Validate where the prefix is built, as the spec's getQueueTopicPrefix does.
+  // An unchecked namespace produces a name no matcher recognises, which routes
+  // to the webhook handler instead of the workflow one -- the exact silent
+  // misroute this module exists to prevent. Fail loudly on misconfiguration.
+  if (!QUEUE_NAMESPACE_RE.test(ns)) {
+    throw new Error(
+      `Invalid WORKFLOW_QUEUE_NAMESPACE ${JSON.stringify(ns)}: must be lowercase alphanumeric, starting with a letter`
+    )
+  }
+  return `__${ns}_wkf_workflow_${workflowName}`
 }
 
 // A workflow queue name in the same namespace as `sourceQueueName`. Used when a
