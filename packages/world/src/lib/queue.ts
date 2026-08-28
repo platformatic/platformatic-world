@@ -118,5 +118,14 @@ export function createQueue (client: HttpClient, config: QueueConfig) {
     return config.deploymentVersion
   }
 
-  return { queue, createQueueHandler, getDeploymentId }
+  // Spec hook (@workflow/world Queue): true only when the error definitively
+  // means the targeted deployment cannot receive the message, so the SDK can
+  // re-route instead of retrying. The workflow service answers 410
+  // (WF_VERSION_EXPIRED) for exactly that case; every other status, including
+  // transport failures with no status at all, stays retryable.
+  const isDeploymentUnavailableError = (error: unknown): boolean => {
+    return (error as { statusCode?: number } | null)?.statusCode === 410
+  }
+
+  return { queue, createQueueHandler, getDeploymentId, isDeploymentUnavailableError }
 }

@@ -211,3 +211,75 @@ describe('queue', () => {
     assert.equal(response.statusCode, 409)
   })
 })
+
+describe('spec alignment', () => {
+  let ctx: TestContext
+
+  before(async () => { ctx = await setupTest() })
+  after(async () => { await teardownTest(ctx) })
+
+  it('routes namespaced queue names by the spec grammar, not a bare prefix', async () => {
+    // The spec allows __{namespace}_wkf_workflow_<id> (WORKFLOW_QUEUE_NAMESPACE).
+    // Matching the un-namespaced literal sent these to the webhook handler.
+    const { isWorkflowQueue, isStepQueue, workflowNameFromQueue, workflowQueueNameLike } =
+      await import('../queue/names.ts')
+
+    assert.ok(isWorkflowQueue('__wkf_workflow_greet'))
+    assert.ok(isWorkflowQueue('__acme_wkf_workflow_greet'))
+    assert.equal(workflowNameFromQueue('__acme_wkf_workflow_greet'), 'greet')
+    assert.ok(isStepQueue('__acme_wkf_step_add'))
+    assert.ok(!isWorkflowQueue('__acme_wkf_step_add'))
+    assert.ok(!isWorkflowQueue('webhook'))
+    // A namespace must be lowercase alphanumeric starting with a letter.
+    assert.ok(!isWorkflowQueue('__9bad_wkf_workflow_greet'))
+
+    // A continuation stays in the namespace the original arrived on.
+    assert.equal(workflowQueueNameLike('__acme_wkf_workflow_greet', 'other'), '__acme_wkf_workflow_other')
+    assert.equal(workflowQueueNameLike('__acme_wkf_step_add', 'other'), '__acme_wkf_workflow_other')
+    assert.equal(workflowQueueNameLike('webhook', 'other'), '__wkf_workflow_other')
+  })
+
+  it('refuses to enqueue for an expired deployment version', async () => {
+    const appRow = await ctx.app.pg.query(
+      'SELECT id FROM workflow_applications WHERE app_id = $1', [ctx.appId]
+    )
+    await ctx.app.pg.query(
+      `INSERT INTO workflow_deployment_versions (application_id, deployment_version, status)
+       VALUES ($1, 'v-expired', 'expired')
+       ON CONFLICT (application_id, deployment_version) DO UPDATE SET status = 'expired'`,
+      [appRow.rows[0].id]
+    )
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/queue`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+      payload: {
+        queueName: '__wkf_workflow_expired-version',
+        message: { runId: 'wrun_expired' },
+        deploymentId: 'v-expired',
+      },
+    })
+    // 410 is what the World client reports through isDeploymentUnavailableError.
+    assert.equal(res.statusCode, 410)
+
+    // A draining version still accepts work, matching routeMessage().
+    await ctx.app.pg.query(
+      `INSERT INTO workflow_deployment_versions (application_id, deployment_version, status)
+       VALUES ($1, 'v-draining', 'draining')
+       ON CONFLICT (application_id, deployment_version) DO UPDATE SET status = 'draining'`,
+      [appRow.rows[0].id]
+    )
+    const draining = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/queue`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+      payload: {
+        queueName: '__wkf_workflow_draining-version',
+        message: { runId: 'wrun_draining' },
+        deploymentId: 'v-draining',
+      },
+    })
+    assert.equal(draining.statusCode, 201)
+  })
+})
