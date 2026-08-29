@@ -161,7 +161,7 @@ importers:
     dependencies:
       '@platformatic/globals':
         specifier: ^3.57.0
-        version: 3.67.0
+        version: 3.68.0
       cbor-x:
         specifier: 1.6.6
         version: 1.6.6
@@ -1229,6 +1229,10 @@ packages:
     resolution: {integrity: sha512-e0AwrerlzWdTDEf7k8ZL9q5YBbRdWJSSjXVCbFvW9x1wLlgr7jBM8qFkg5IEXcxOk6Y5d50HglLZokhmmJePlA==}
     engines: {node: '>=22.19.0'}
 
+  '@platformatic/globals@3.68.0':
+    resolution: {integrity: sha512-sGM0dmeqO0GFE2eYvX9KhR1IIVMEY3QJHDm/dIJMX9NlRD+DlwQ2AyjGjgGrOBzQjlOOK5PfZQmFtyhb4wj4fg==}
+    engines: {node: '>=22.19.0'}
+
   '@platformatic/http-metrics@0.3.0':
     resolution: {integrity: sha512-e+wQJDCd9v7yKeV4u30ibAe5uGB14k+jDw1w9FqsM3tDgFY0UEHb24hJR9j2bVa6091e+ppGy3L4LhyUR92M0w==}
 
@@ -1797,14 +1801,8 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@workflow/world@4.4.0':
-    resolution: {integrity: sha512-rlq2qr0VFWG3YYqMpD9k95Tz5h5zqr24Bg8PheZ+rJgkgWZBXWLHS5BkiTA7K3l58NC8M78qkMGakU2/gb3Aag==}
-
   '@workflow/world@4.5.0':
     resolution: {integrity: sha512-ubKnoyxEL9s9GbnUZAeoLFEPQ/GnsFU91GMeUlOMs9q/HEEQQiFUpNhff0Jv0OrrVLFBMkM4L1Xf6qLSOvFcfw==}
-
-  '@workflow/world@5.0.0-beta.29':
-    resolution: {integrity: sha512-3z5GHEJgvb2AFfznQ4JfT1rm5U9jNupuG4YtrUUrtJ+807JkcjhP85fMN7Jo30975CcPPgnZmlnYI4sM0Y1d/w==}
 
   '@workflow/world@5.0.0-beta.31':
     resolution: {integrity: sha512-+aYkb841BpJmZ9I4Ivx7924xzb+yau+u5JcpXIs4eTOwFZaAuJpEEdAdtM/+7r6ku0wS/MLUQaWm2O16ZyU46w==}
@@ -5773,6 +5771,12 @@ snapshots:
       '@platformatic/prom-client': 1.0.0
       pino: 9.14.0
 
+  '@platformatic/globals@3.68.0':
+    dependencies:
+      '@opentelemetry/api': 1.9.1
+      '@platformatic/prom-client': 1.0.0
+      pino: 9.14.0
+
   '@platformatic/http-metrics@0.3.0':
     dependencies:
       '@platformatic/prom-client': 1.0.0
@@ -6868,17 +6872,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@workflow/world@4.4.0':
-    dependencies:
-      ulid: 3.0.2
-      zod: 4.3.6
-
   '@workflow/world@4.5.0':
-    dependencies:
-      ulid: 3.0.2
-      zod: 4.3.6
-
-  '@workflow/world@5.0.0-beta.29':
     dependencies:
       ulid: 3.0.2
       zod: 4.3.6
