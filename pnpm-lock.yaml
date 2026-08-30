@@ -102,7 +102,7 @@ importers:
         version: 3.68.0(supports-color@10.2.2)
       '@platformatic/service':
         specifier: ^3.40.0
-        version: 3.67.0(supports-color@10.2.2)
+        version: 3.68.0(supports-color@10.2.2)
       cbor-x:
         specifier: 1.6.6
         version: 1.6.6
@@ -1285,12 +1285,12 @@ packages:
     resolution: {integrity: sha512-mTI43m001FNERVro+Y5rARvikbTUezZvHOB9s/fgv6yoUw94WRkPjRGFj7IcnzMcwxR3/N4T0bTkfmcyz/nhgw==}
     engines: {node: '>=22.19.0'}
 
-  '@platformatic/scalar-theme@3.67.0':
-    resolution: {integrity: sha512-zgocFWGAqJc6kAd3jhO0z/+QxHiTQWTSBvPtPTtBSrNGfnjv8p43ClzVa/+X3KOcZI4Z/ez6Dettb7cj2cZMMg==}
+  '@platformatic/scalar-theme@3.68.0':
+    resolution: {integrity: sha512-AFeNTsgOIQy95LAEM6zaLhZCbTJB3beAzYmdJi3DMHed0QAb+4W5/QKmD9IpvwuTsRmvfWDpQH1wfYiiLnmOhQ==}
     engines: {node: '>=22.19.0'}
 
-  '@platformatic/service@3.67.0':
-    resolution: {integrity: sha512-e7ze9YpbAWgw0OcgoFwln06lt4poHkj2cztfFWz0TWN1+9/oR2RRLJWgVRAxVi6mrPlww8tFHND++Ikwd7vzbw==}
+  '@platformatic/service@3.68.0':
+    resolution: {integrity: sha512-d4h9XlQh4taIl/zhI/r8SxnRq3oCjQONXgYN2igz/Pqw4WABCzIoYZAAhph8mqeEcLaIs6z9pe9NgLQAIoEOtw==}
     engines: {node: '>=22.19.0'}
 
   '@platformatic/telemetry@3.67.0':
@@ -2670,11 +2670,11 @@ packages:
   fast-safe-stringify@2.1.1:
     resolution: {integrity: sha512-W+KJc2dmILlPplD/H4K9l9LcAHAfPtP6BY84uVLXQ6Evcz9Lcg33Y2z1IVblT6xdY54PXYVHEv+0Wpq8Io6zkA==}
 
-  fast-uri@2.4.4:
-    resolution: {integrity: sha512-GntYZbd2KSiFfoZI3Y02rXKihfsPwdWfiHrwKVLuU1i810D0SYw7fCarLxaRO2VvneTrbzCxSz3GnvEfUiApug==}
+  fast-uri@2.4.5:
+    resolution: {integrity: sha512-k9Nq2gfGrPow/wJcIQ+dbhLqSTdHx2eH+e6IAjAam0Xs9W5Uda8eXu6Ns73byuuyYvIXYnEJ9ziARtlXm9opgw==}
 
-  fast-uri@3.1.5:
-    resolution: {integrity: sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==}
+  fast-uri@3.1.6:
+    resolution: {integrity: sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==}
 
   fast-uri@4.1.2:
     resolution: {integrity: sha512-TyGmBcbDTZXcb2cj5MV89DrF42DKvb3y5DDUNh95iO+IMeAzMkVSxK1PZRrRIpc9yg8U2GhGdbofNa0LS/a4Bw==}
@@ -3846,8 +3846,8 @@ packages:
     resolution: {integrity: sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g==}
     engines: {node: '>= 0.8.0'}
 
-  pretty-ms@9.3.0:
-    resolution: {integrity: sha512-gjVS5hOP+M3wMm5nmNOucbIrqudzs9v/57bWRHQWLYklXqoXKrVfYW2W9+glfGsqtPgpiz5WwyEEB+ksXIx3gQ==}
+  pretty-ms@9.3.1:
+    resolution: {integrity: sha512-HzMy3Geq23nVALD/M2LliU+F+M+gVNsvkQWWqeBZ8HDiCgzo6YPJ/Omrmtq24EFrIsk0a3EkQGEd7bDOo+IhGA==}
     engines: {node: '>=18'}
 
   process-warning@4.0.1:
@@ -4718,8 +4718,8 @@ packages:
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.5.2:
+    resolution: {integrity: sha512-XkYXCol10+ba/6F/cueWV+TezUeOqXW0hdeJt5CdXjTYeAgAQg5N03RQdJ80mhfFE72+pblvYMW4wy2Qp4Qbrg==}
 
 snapshots:
 
@@ -4985,7 +4985,7 @@ snapshots:
       '@fastify/send': 4.1.1
       content-disposition: 2.0.1
       fastify-plugin: 6.0.0
-      fastq: 1.20.1
+      fastq: 1.20.2
       glob: 13.0.6
 
   '@fastify/swagger@9.8.1(supports-color@10.2.2)':
@@ -6005,9 +6005,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@platformatic/scalar-theme@3.67.0': {}
+  '@platformatic/scalar-theme@3.68.0': {}
 
-  '@platformatic/service@3.67.0(supports-color@10.2.2)':
+  '@platformatic/service@3.68.0(supports-color@10.2.2)':
     dependencies:
       '@fastify/accepts': 5.0.4
       '@fastify/autoload': 6.5.0
@@ -6017,13 +6017,13 @@ snapshots:
       '@fastify/static': 10.1.3
       '@fastify/swagger': 9.8.1(supports-color@10.2.2)
       '@fastify/under-pressure': 9.1.0
-      '@platformatic/basic': 3.67.0(supports-color@10.2.2)
-      '@platformatic/foundation': 3.67.0(supports-color@10.2.2)
-      '@platformatic/generators': 3.67.0(supports-color@10.2.2)
-      '@platformatic/globals': 3.67.0
-      '@platformatic/metrics': 3.67.0
-      '@platformatic/scalar-theme': 3.67.0
-      '@platformatic/telemetry': 3.67.0(supports-color@10.2.2)
+      '@platformatic/basic': 3.68.0(supports-color@10.2.2)
+      '@platformatic/foundation': 3.68.0(supports-color@10.2.2)
+      '@platformatic/generators': 3.68.0(supports-color@10.2.2)
+      '@platformatic/globals': 3.68.0
+      '@platformatic/metrics': 3.68.0
+      '@platformatic/scalar-theme': 3.68.0
+      '@platformatic/telemetry': 3.68.0(supports-color@10.2.2)
       '@scalar/fastify-api-reference': 1.62.5
       '@types/node': 22.20.1
       '@types/ws': 8.18.1
@@ -6171,7 +6171,7 @@ snapshots:
       '@scalar/helpers': 0.9.0
       nanoid: 5.1.16
       type-fest: 5.8.0
-      zod: 4.4.3
+      zod: 4.5.2
 
   '@scalar/validation@0.6.0': {}
 
@@ -7276,7 +7276,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.5
+      fast-uri: 3.1.6
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -8148,7 +8148,7 @@ snapshots:
       is-plain-obj: 4.1.0
       is-stream: 4.0.1
       npm-run-path: 6.0.0
-      pretty-ms: 9.3.0
+      pretty-ms: 9.3.1
       signal-exit: 4.1.0
       strip-final-newline: 4.0.0
       yoctocolors: 2.2.0
@@ -8252,7 +8252,7 @@ snapshots:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       fast-deep-equal: 3.1.3
-      fast-uri: 2.4.4
+      fast-uri: 2.4.5
       json-schema-ref-resolver: 1.0.1
       rfdc: 1.4.1
 
@@ -8273,9 +8273,9 @@ snapshots:
 
   fast-safe-stringify@2.1.1: {}
 
-  fast-uri@2.4.4: {}
+  fast-uri@2.4.5: {}
 
-  fast-uri@3.1.5: {}
+  fast-uri@3.1.6: {}
 
   fast-uri@4.1.2: {}
 
@@ -8869,7 +8869,7 @@ snapshots:
   json-schema-resolver@3.0.0(supports-color@10.2.2):
     dependencies:
       debug: 4.4.3(supports-color@10.2.2)
-      fast-uri: 3.1.5
+      fast-uri: 3.1.6
       rfdc: 1.4.1
     transitivePeerDependencies:
       - supports-color
@@ -9489,7 +9489,7 @@ snapshots:
 
   prelude-ls@1.2.1: {}
 
-  pretty-ms@9.3.0:
+  pretty-ms@9.3.1:
     dependencies:
       parse-ms: 4.0.0
 
@@ -10537,4 +10537,4 @@ snapshots:
 
   zod@4.3.6: {}
 
-  zod@4.4.3: {}
+  zod@4.5.2: {}
