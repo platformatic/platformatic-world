@@ -4,6 +4,7 @@ import { decode, encode } from 'cbor-x'
 import { routeMessage } from './router.ts'
 import { dispatchMessage, type DispatchResult } from './dispatcher.ts'
 import { getRetryDelay, isMaxAttempts, MAX_ATTEMPTS } from './retry.ts'
+import { isStepQueue, isWorkflowQueue, workflowNameFromQueue, workflowQueueNameLike } from './names.ts'
 
 // How often delivered-but-unacknowledged messages are reclaimed.
 const RECLAIM_CHECK_INTERVAL = 60_000
@@ -140,7 +141,7 @@ async function ensureRunForWorkflowDelivery (client: pg.PoolClient, msg: any): P
   const runInput = payload?.runInput
   const workflowName = typeof runInput?.workflowName === 'string'
     ? runInput.workflowName
-    : msg.queue_name.slice('__wkf_workflow_'.length)
+    : workflowNameFromQueue(msg.queue_name)
   const deploymentId = typeof runInput?.deploymentId === 'string'
     ? runInput.deploymentId
     : msg.deployment_version
@@ -198,7 +199,7 @@ async function failBackgroundStep (client: pg.PoolClient, msg: any, failure: Fai
        (queue_name, run_id, deployment_version, application_id,
         payload, payload_bytes, payload_encoding, status)
      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-    [`__wkf_workflow_${step.rows[0].workflow_name}`, msg.run_id, msg.deployment_version,
+    [workflowQueueNameLike(msg.queue_name, step.rows[0].workflow_name), msg.run_id, msg.deployment_version,
       msg.application_id, payloadJson, payloadBytes, msg.payload_encoding]
   )
   await client.query("SELECT pg_notify('deferred_messages', '{}')")
@@ -209,16 +210,16 @@ async function finalizeFailure (client: pg.PoolClient, msg: any, failure: Failur
   // v5 dispatches background steps through the workflow queue, while v4 uses
   // a dedicated step queue. The payload is the authoritative discriminator.
   if (await failBackgroundStep(client, msg, failure)) return
-  if (msg.queue_name.startsWith('__wkf_workflow_')) {
+  if (isWorkflowQueue(msg.queue_name)) {
     await failRun(client, msg, failure)
-  } else if (msg.queue_name.startsWith('__wkf_step_')) {
+  } else if (isStepQueue(msg.queue_name)) {
     await failRun(client, msg, failure)
   }
 }
 
 async function lockRunForFailureFinalization (client: pg.PoolClient, msg: any): Promise<void> {
   if (!msg.run_id) return
-  if (msg.queue_name.startsWith('__wkf_workflow_')) await ensureRunForWorkflowDelivery(client, msg)
+  if (isWorkflowQueue(msg.queue_name)) await ensureRunForWorkflowDelivery(client, msg)
   await client.query(
     'SELECT id FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
     [msg.run_id, msg.application_id]

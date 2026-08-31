@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify'
 
 const ulid = monotonicFactory()
 import { RunNotFound, BadRequest } from '../lib/errors.ts'
+import { workflowQueueName } from '../queue/names.ts'
 import { formatRun, encodeData } from './events.ts'
 
 async function runActionsPlugin (app: FastifyInstance): Promise<void> {
@@ -52,7 +53,7 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
          ORDER BY id ASC LIMIT 1`,
         [runId, appId]
       )
-      const queueName = originalQueue.rows[0]?.queue_name || `__wkf_workflow_${row.workflow_name}`
+      const queueName = originalQueue.rows[0]?.queue_name || workflowQueueName(row.workflow_name)
       await client.query(
         `INSERT INTO workflow_queue_messages
          (queue_name, run_id, deployment_version, application_id, payload, status)

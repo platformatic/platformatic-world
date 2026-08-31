@@ -1,4 +1,5 @@
 import type pg from 'pg'
+import { isStepQueue, isWorkflowQueue } from './names.ts'
 
 export interface RouteResult {
   url: string
@@ -31,10 +32,11 @@ export async function routeMessage (
 
   if (registrations.rows.length === 0) return null
 
-  const queueMatch = queueName.match(/^__(?:[a-z][a-z0-9]*_)?wkf_(workflow|step)_.+$/)
-  const urlField = queueMatch?.[1] === 'step'
+  // Same grammar as the rest of the service, from ./names.ts, so routing and
+  // failure finalization cannot drift apart on what counts as a workflow queue.
+  const urlField = isStepQueue(queueName)
     ? 'step_url'
-    : queueMatch?.[1] === 'workflow' ? 'workflow_url' : 'webhook_url'
+    : isWorkflowQueue(queueName) ? 'workflow_url' : 'webhook_url'
   const urls = [...new Set(registrations.rows.map(registration => registration[urlField]))]
   const url = urls[Math.floor(Math.random() * urls.length)]
 

@@ -1,7 +1,7 @@
 import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { encode } from 'cbor-x'
-import { DuplicateIdempotencyKey, BadRequest } from '../lib/errors.ts'
+import { DuplicateIdempotencyKey, BadRequest, VersionExpired } from '../lib/errors.ts'
 import { checkQueueRateLimit } from '../lib/quotas.ts'
 import type { CborBody } from './cbor.ts'
 
@@ -33,10 +33,10 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
       throw new BadRequest('queueName and message are required')
     }
 
-    await checkQueueRateLimit(app, appId)
-
     const runId = envelope.message.runId || envelope.message.workflowRunId || ''
     const deploymentVersion = envelope.deploymentId || ''
+
+    await checkQueueRateLimit(app, appId)
 
     if (envelope.idempotencyKey) {
       const existing = await app.pg.query(
@@ -46,6 +46,22 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
       if (existing.rows.length > 0) {
         throw new DuplicateIdempotencyKey(envelope.idempotencyKey)
       }
+    }
+
+    // Fail fast when the target deployment version is expired. routeMessage()
+    // already refuses to dispatch to an expired version, so accepting the
+    // message here only buys it ten doomed delivery attempts before the poller
+    // dead-letters it. 410 is the spec's "this deployment cannot receive the
+    // message" signal, which the World client surfaces through
+    // isDeploymentUnavailableError() so the SDK can re-route instead of retry.
+    // Draining versions still accept work, matching routeMessage().
+    if (deploymentVersion) {
+      const version = await app.pg.query(
+        `SELECT status FROM workflow_deployment_versions
+         WHERE application_id = $1 AND deployment_version = $2`,
+        [appId, deploymentVersion]
+      )
+      if (version.rows[0]?.status === 'expired') throw new VersionExpired(deploymentVersion)
     }
 
     // For cbor, we store the encoded message bytes so dispatch can forward
