@@ -10,8 +10,21 @@ const WORKFLOW_ROOT = join(ROOT, '..', 'packages', 'workflow')
 
 // Random ports per run avoid races with the kernel's TIME_WAIT on a fixed
 // port across back-to-back test invocations (EADDRINUSE on :::PORT).
+//
+// Kept below Linux's ephemeral range (net.ipv4.ip_local_port_range, 32768-60999
+// by default). The previous 30000-50000 window overlapped it almost entirely,
+// so a draw could land on a port the kernel had already handed to an unrelated
+// outbound connection -- an npm fetch, a Postgres client, a dispatch. killPort
+// cannot reclaim someone else's client socket and TIME_WAIT outlives the
+// waitForPortFree budget, so setup() failed with "Port N still in use after
+// 10000ms" and took the whole suite with it. Picking below the floor removes
+// the contention rather than widening the timeout.
+//
+// e2e-v4 avoids the guess entirely by binding :0 and reading back the assigned
+// port; doing that here would mean late-binding the exported *_URL constants.
+const EPHEMERAL_PORT_FLOOR = 32_768
 function pickPort (): number {
-  return 30_000 + Math.floor(Math.random() * 20_000)
+  return 10_000 + Math.floor(Math.random() * (EPHEMERAL_PORT_FLOOR - 12_000))
 }
 export const WF_PORT = pickPort()
 export const NEXT_PORT = pickPort()
