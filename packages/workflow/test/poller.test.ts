@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { decode, encode } from 'cbor-x'
-import { handleDispatchResult, handleNoRoute } from '../queue/poller.ts'
+import { onDispatchResult, onNoRoute } from '../queue/poller.ts'
+import { createPostgresQueueStore } from '../queue/stores/postgres.ts'
+
+const silentLog = { info () {}, warn () {}, error () {} }
+const makeStore = (ctx: TestContext) =>
+  createPostgresQueueStore(ctx.app.pg, silentLog, 'postgres')
 import { setupTest, teardownTest, type TestContext } from './helper.ts'
 
 describe('poller result handling', () => {
@@ -54,21 +59,17 @@ describe('poller result handling', () => {
       [runId, applicationId, JSON.stringify({ runId })]
     )
     const msg = inserted.rows[0]
-    const client = await ctx.app.pg.connect()
-    try {
-      const failure = {
-        success: false,
-        statusCode: 503,
-        error: { code: 'HTTP_503', message: 'Target returned HTTP 503' },
-      }
-      const target = {
-        url: 'https://user:password@example.com/flow?token=secret#fragment',
-      }
-      await handleDispatchResult(client, msg, failure, target)
-      await handleDispatchResult(client, msg, failure, target)
-    } finally {
-      client.release()
+    const store = makeStore(ctx)
+    const failure = {
+      success: false,
+      statusCode: 503,
+      error: { code: 'HTTP_503', message: 'Target returned HTTP 503' },
     }
+    const target = {
+      url: 'https://user:password@example.com/flow?token=secret#fragment',
+    }
+    await onDispatchResult(store, msg, failure, target)
+    await onDispatchResult(store, msg, failure, target)
 
     const message = (await ctx.app.pg.query(
       `SELECT status, attempts, last_failure, dead_at, failure_finalized_at
@@ -126,16 +127,11 @@ describe('poller result handling', () => {
             encoding === 'cbor' ? Buffer.from(encode(payload)) : null,
             encoding]
         )
-        const client = await ctx.app.pg.connect()
-        try {
-          await handleDispatchResult(client, inserted.rows[0], {
-            success: false,
-            statusCode: 0,
-            error: { code: 'ECONNRESET', message: 'Target connection was reset' },
-          })
-        } finally {
-          client.release()
-        }
+        await onDispatchResult(makeStore(ctx), inserted.rows[0], {
+          success: false,
+          statusCode: 0,
+          error: { code: 'ECONNRESET', message: 'Target connection was reset' },
+        })
 
         const step = (await ctx.app.pg.query(
           'SELECT status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2',
@@ -176,12 +172,7 @@ describe('poller result handling', () => {
        RETURNING *`,
       [applicationId]
     )
-    const client = await ctx.app.pg.connect()
-    try {
-      await handleNoRoute(client, inserted.rows[0])
-    } finally {
-      client.release()
-    }
+    await onNoRoute(makeStore(ctx), inserted.rows[0])
     const row = (await ctx.app.pg.query(
       'SELECT status, attempts, last_failure, updated_at FROM workflow_queue_messages WHERE id = $1',
       [inserted.rows[0].id]
@@ -192,7 +183,7 @@ describe('poller result handling', () => {
     assert.ok(row.updated_at)
   })
 
-  it('re-enqueues a successful continuation only when delivery wins the predicate', async () => {
+  it('re-enqueues a successful continuation once, gated by claimForDispatch', async () => {
     const runId = await createRun('successful-continuation')
     const inserted = await ctx.app.pg.query(
       `INSERT INTO workflow_queue_messages
@@ -201,19 +192,22 @@ describe('poller result handling', () => {
        RETURNING *`,
       [runId, applicationId, JSON.stringify({ runId })]
     )
-    const client = await ctx.app.pg.connect()
-    try {
-      const result = { success: true, statusCode: 200, timeoutSeconds: 0 }
-      await handleDispatchResult(client, inserted.rows[0], result)
-      await handleDispatchResult(client, inserted.rows[0], result)
-    } finally {
-      client.release()
-    }
+    const store = makeStore(ctx)
+    const result = { success: true, statusCode: 200, timeoutSeconds: 0 }
+    // The gate, not the handler, is what makes this exactly-once: a second
+    // claim of the same message returns null, so the continuation is written
+    // once however many times the broker redelivers it.
+    const claimed = await store.claimForDispatch(inserted.rows[0].id)
+    assert.ok(claimed, 'first claim wins')
+    assert.equal(await store.claimForDispatch(inserted.rows[0].id), null, 'second claim is refused')
+    await onDispatchResult(store, claimed!, result)
 
+    // 'acked', not 'delivered': a completed delivery has to leave the state
+    // reclaimExpired treats as an abandoned one.
     assert.equal((await ctx.app.pg.query(
       'SELECT status FROM workflow_queue_messages WHERE id = $1',
       [inserted.rows[0].id]
-    )).rows[0].status, 'delivered')
+    )).rows[0].status, 'acked')
     const continuations = await ctx.app.pg.query(
       `SELECT id FROM workflow_queue_messages
        WHERE run_id = $1 AND queue_name = '__wkf_workflow_successful-continuation'
