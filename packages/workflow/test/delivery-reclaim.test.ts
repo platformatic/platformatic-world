@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { reclaimExpiredDeliveries } from '../queue/poller.ts'
+import { reclaimExpiredDeliveries } from '../queue/stores/postgres.ts'
 import { setupTest, teardownTest, type TestContext } from './helper.ts'
 
 const silentLog = { warn () {}, error () {}, info () {} }

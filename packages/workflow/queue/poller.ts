@@ -1,342 +1,107 @@
-import pg from 'pg'
-import createLeaderElector from '@platformatic/leader'
-import { decode, encode } from 'cbor-x'
+// Drains the queue and delivers each message to the pod that should run it.
+//
+// Three collaborators, and the split matters:
+//   - QueueStore (./store.ts)      durable state. Always Postgres.
+//   - BrokerTransport (./transport.ts)  carries ready messages. Pluggable.
+//   - the delivery policy below    routing, dispatch, retry, finalization. Ours.
+//
+// The Postgres pool is still a parameter, but only for the routing table:
+// registered handlers are our data, not the broker's, whatever moves the bytes.
+
+import type pg from 'pg'
 import { routeMessage } from './router.ts'
 import { dispatchMessage, type DispatchResult } from './dispatcher.ts'
-import { getRetryDelay, isMaxAttempts, MAX_ATTEMPTS } from './retry.ts'
-import { isStepQueue, isWorkflowQueue, workflowNameFromQueue, workflowQueueNameLike } from './names.ts'
+import { getRetryDelay, isMaxAttempts } from './retry.ts'
+import {
+  failureDetail,
+  finalizeFailure,
+  lockRunForFailureFinalization,
+  type RegisteredTarget,
+} from './delivery.ts'
+import type { FailureFinalizer, QueueMessage, QueueStore } from './store.ts'
+import type { BrokerTransport } from './transport.ts'
+import type { Coordinator } from './coordinator.ts'
 
 // How often delivered-but-unacknowledged messages are reclaimed.
 const RECLAIM_CHECK_INTERVAL = 60_000
-// How long a message may stay 'delivered' before it is assumed its executor
-// died and it is redelivered. This bounds a single step, not a whole run: a
-// run may idle for days on a hook without any message outstanding, and that is
-// not a fault. Must exceed the slowest legitimate step (model calls included).
-const DEFAULT_VISIBILITY_TIMEOUT_S = 900
-const VISIBILITY_TIMEOUT_S = Number(process.env.WF_DELIVERY_VISIBILITY_TIMEOUT_S) > 0
-  ? Number(process.env.WF_DELIVERY_VISIBILITY_TIMEOUT_S)
-  : DEFAULT_VISIBILITY_TIMEOUT_S
-// Safety-net poll interval: scheduleNextWakeup() is fire-and-forget to avoid
-// blocking pendingNotify re-runs. When multiple executeOnce() cycles run
-// back-to-back, two concurrent scheduleNextWakeup() calls can race — the
-// second clears the first's deferredTimer, then queries the DB after the
-// deferred message's deliver_at has passed NOW(), finding nothing to schedule.
-// The deferred message is stuck: deliver_at in the past but status still
-// 'deferred', with no timer or notification to trigger promotion.
-// This interval ensures executeOnce() runs periodically regardless, so any
-// stuck deferred messages are promoted within a bounded time window.
+// Safety-net poll interval. scheduleNextWakeup() is fire-and-forget so it does
+// not block pendingNotify re-runs, which means two cycles can race and leave a
+// due message with no timer pointing at it. This bounds how long that lasts.
 const SAFETY_POLL_INTERVAL = 5_000
-const LEADER_LOCK_ID = 42424242
-const DEFERRED_CHANNEL = 'deferred_messages'
-// Upper bound on dispatches in flight at once. Each dispatch is an independent
-// task (see processMessage), so a single slow/hung handler can no longer block
-// the poll loop; this cap just bounds concurrency and the in-flight set size.
+// Upper bound on dispatches in flight at once. Each is its own task, so one
+// slow handler cannot block the loop; this just bounds concurrency.
 const MAX_INFLIGHT = 200
+// Outbox entries handed to the broker per cycle.
+const RELAY_BATCH = 100
 
-interface FailureDetail {
-  code: string
-  message: string
-  at: string
-  attempt: number
-  statusCode?: number
-  target: {
-    queueName: string
-    deploymentVersion: string
-    url?: string
+// The domain half of a terminal failure, handed to the store so it can run
+// inside the transaction that records the dead letter.
+export const failureFinalizer: FailureFinalizer = {
+  lock: lockRunForFailureFinalization,
+  finalize: finalizeFailure,
+}
+
+// No pod is registered for this message's deployment version, or that version
+// expired. Retry under the ceiling, then give up: it can never be delivered to
+// code that would understand it.
+export async function onNoRoute (store: QueueStore, msg: QueueMessage): Promise<void> {
+  const attempts = msg.attempts + 1
+  const failure = failureDetail(
+    msg, attempts, 'ROUTE_NOT_FOUND',
+    'No registered target is available for this queue delivery'
+  )
+  if (isMaxAttempts(attempts)) await store.deadLetter(msg, failure, failureFinalizer)
+  else await store.scheduleRetry(msg, getRetryDelay(attempts), failure)
+}
+
+export async function onDispatchResult (
+  store: QueueStore,
+  msg: QueueMessage,
+  result: DispatchResult,
+  target?: RegisteredTarget
+): Promise<void> {
+  if (result.success) {
+    // A numeric timeoutSeconds means the handler asked to be called back: 0 for
+    // immediately, more for a deferred re-invocation (the 425 retryAfter path).
+    const continuation = typeof result.timeoutSeconds === 'number'
+      ? { delaySeconds: result.timeoutSeconds }
+      : undefined
+    await store.ack(msg, continuation)
+    return
   }
+
+  const attempts = msg.attempts + 1
+  const error = result.error || { code: 'DISPATCH_ERROR', message: 'Target request failed' }
+  const failure = failureDetail(msg, attempts, error.code, error.message, target, result.statusCode)
+
+  if (isMaxAttempts(attempts)) await store.deadLetter(msg, failure, failureFinalizer)
+  else await store.scheduleRetry(msg, getRetryDelay(attempts), failure)
 }
 
-interface RegisteredTarget {
-  url: string
-}
-
-export function sanitizeTargetUrl (value: string): string | undefined {
-  try {
-    const url = new URL(value)
-    url.username = ''
-    url.password = ''
-    url.search = ''
-    url.hash = ''
-    return url.toString().slice(0, 1024)
-  } catch {
-    return undefined
-  }
-}
-
-function failureDetail (
-  msg: any,
-  attempt: number,
-  code: string,
-  message: string,
-  target?: RegisteredTarget,
-  statusCode?: number
-): FailureDetail {
-  return {
-    code: code.slice(0, 64),
-    message: message.slice(0, 512),
-    at: new Date().toISOString(),
-    attempt,
-    ...(statusCode !== undefined ? { statusCode } : {}),
-    target: {
-      queueName: String(msg.queue_name).slice(0, 256),
-      deploymentVersion: String(msg.deployment_version).slice(0, 256),
-      ...(target?.url ? { url: sanitizeTargetUrl(target.url) } : {}),
-    },
-  }
-}
-
-function queuePayload (msg: any): any {
-  return msg.payload_encoding === 'cbor' ? decode(msg.payload_bytes) : msg.payload
-}
-
-// A valid v5 devalue payload containing a plain diagnostic object. Keeping the
-// user-facing error small avoids persisting transport response bodies or stacks.
-function terminalError (failure: FailureDetail): Buffer {
-  const value = [{ name: 1, message: 2, code: 3 }, 'QueueDeliveryError', failure.message, failure.code]
-  return Buffer.from(`devl${JSON.stringify(value)}`)
-}
-
-function eventError (error: Buffer): Buffer {
-  return Buffer.from(JSON.stringify({ error: error.toString('base64') }))
-}
-
-async function failRun (client: pg.PoolClient, msg: any, failure: FailureDetail): Promise<void> {
-  const error = terminalError(failure)
-  const failed = await client.query(
-    `UPDATE workflow_runs
-     SET status = 'failed', error = $3, completed_at = NOW(), updated_at = NOW()
-     WHERE id = $1 AND application_id = $2 AND status IN ('pending', 'running')
-     RETURNING id`,
-    [msg.run_id, msg.application_id, error]
-  )
-  if (failed.rows.length === 0) return
-
-  await client.query(
-    `UPDATE workflow_hooks SET status = 'disposed', disposed_at = NOW()
-     WHERE run_id = $1 AND application_id = $2 AND status != 'disposed'`,
-    [msg.run_id, msg.application_id]
-  )
-  await client.query(
-    `UPDATE workflow_waits SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-     WHERE run_id = $1 AND application_id = $2 AND status = 'waiting'`,
-    [msg.run_id, msg.application_id]
-  )
-  await client.query(
-    `INSERT INTO workflow_events (run_id, application_id, event_type, event_data)
-     SELECT $1::varchar, $2::integer, 'run_failed', $3
-     WHERE NOT EXISTS (
-       SELECT 1 FROM workflow_events
-       WHERE run_id = $1 AND application_id = $2 AND event_type = 'run_failed'
-     )`,
-    [msg.run_id, msg.application_id, eventError(error)]
-  )
-}
-
-async function ensureRunForWorkflowDelivery (client: pg.PoolClient, msg: any): Promise<void> {
-  if (!msg.run_id) return
-  let payload
-  try {
-    payload = queuePayload(msg)
-  } catch {}
-  const runInput = payload?.runInput
-  const workflowName = typeof runInput?.workflowName === 'string'
-    ? runInput.workflowName
-    : workflowNameFromQueue(msg.queue_name)
-  const deploymentId = typeof runInput?.deploymentId === 'string'
-    ? runInput.deploymentId
-    : msg.deployment_version
-
-  await client.query(
-    `INSERT INTO workflow_runs
-       (id, application_id, workflow_name, deployment_id, status, execution_context, spec_version)
-     VALUES ($1, $2, $3, $4, 'pending', $5, $6)
-     ON CONFLICT (id) DO NOTHING`,
-    [msg.run_id, msg.application_id, workflowName || 'unknown', deploymentId || 'unknown',
-      runInput?.executionContext || null, runInput?.specVersion || null]
-  )
-}
-
-async function failBackgroundStep (client: pg.PoolClient, msg: any, failure: FailureDetail): Promise<boolean> {
-  let payload
-  try {
-    payload = queuePayload(msg)
-  } catch {
-    return false
-  }
-  if (!payload || typeof payload.stepId !== 'string') return false
-
-  const step = await client.query(
-    `SELECT s.id, s.status, r.workflow_name
-     FROM workflow_steps s
-     JOIN workflow_runs r ON r.id = s.run_id AND r.application_id = s.application_id
-     WHERE s.run_id = $1 AND s.application_id = $2 AND s.correlation_id = $3
-     FOR UPDATE OF s`,
-    [msg.run_id, msg.application_id, payload.stepId]
-  )
-  // A valid background-step payload must never directly fail the whole run.
-  // A missing/terminal step means another path already resolved its state.
-  if (step.rows.length === 0 || ['completed', 'failed', 'cancelled'].includes(step.rows[0].status)) return true
-
-  const error = terminalError(failure)
-  await client.query(
-    `UPDATE workflow_steps
-     SET status = 'failed', error = $3, completed_at = NOW(), updated_at = NOW()
-     WHERE id = $1 AND application_id = $2`,
-    [step.rows[0].id, msg.application_id, error]
-  )
-  await client.query(
-    `INSERT INTO workflow_events
-       (run_id, application_id, event_type, correlation_id, event_data)
-     VALUES ($1, $2, 'step_failed', $3, $4)`,
-    [msg.run_id, msg.application_id, payload.stepId, eventError(error)]
-  )
-
-  const continuation = { runId: msg.run_id }
-  const payloadJson = msg.payload_encoding === 'json' ? JSON.stringify(continuation) : null
-  const payloadBytes = msg.payload_encoding === 'cbor' ? Buffer.from(encode(continuation)) : null
-  await client.query(
-    `INSERT INTO workflow_queue_messages
-       (queue_name, run_id, deployment_version, application_id,
-        payload, payload_bytes, payload_encoding, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-    [workflowQueueNameLike(msg.queue_name, step.rows[0].workflow_name), msg.run_id, msg.deployment_version,
-      msg.application_id, payloadJson, payloadBytes, msg.payload_encoding]
-  )
-  await client.query("SELECT pg_notify('deferred_messages', '{}')")
-  return true
-}
-
-async function finalizeFailure (client: pg.PoolClient, msg: any, failure: FailureDetail): Promise<void> {
-  // v5 dispatches background steps through the workflow queue, while v4 uses
-  // a dedicated step queue. The payload is the authoritative discriminator.
-  if (await failBackgroundStep(client, msg, failure)) return
-  if (isWorkflowQueue(msg.queue_name)) {
-    await failRun(client, msg, failure)
-  } else if (isStepQueue(msg.queue_name)) {
-    await failRun(client, msg, failure)
-  }
-}
-
-async function lockRunForFailureFinalization (client: pg.PoolClient, msg: any): Promise<void> {
-  if (!msg.run_id) return
-  if (isWorkflowQueue(msg.queue_name)) await ensureRunForWorkflowDelivery(client, msg)
-  await client.query(
-    'SELECT id FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
-    [msg.run_id, msg.application_id]
-  )
-}
-
-// A message stuck in 'delivered' means its executor never reported back, most
-// likely because it died mid-step. Nothing else reclaims it: the retry paths
-// only touch 'pending', 'deferred' and 'failed'. Redelivering resumes the run
-// rather than failing it.
-//
-// Deliberately scoped to messages, not runs. A run with no message outstanding
-// is idle, not stuck -- it may be parked on a hook for days -- and inactivity
-// is not a fault in a durable workflow.
-export async function reclaimExpiredDeliveries (
-  client: pg.PoolClient,
+export function createPoller (
+  store: QueueStore,
+  transport: BrokerTransport,
+  pool: pg.Pool,
   log: any,
-  visibilityTimeoutS: number = VISIBILITY_TIMEOUT_S
-): Promise<number> {
-  try {
-    // Under the retry ceiling: hand it back to the poller for another attempt.
-    const reclaimed = await client.query(
-      `UPDATE workflow_queue_messages m
-       SET status = 'pending', attempts = m.attempts + 1,
-           delivered_at = NULL, updated_at = NOW()
-       FROM workflow_runs r
-       WHERE m.run_id = r.id
-         AND m.status = 'delivered'
-         AND m.delivered_at < NOW() - make_interval(secs => $1)
-         AND r.status IN ('pending', 'running')
-         AND m.attempts < $2
-       RETURNING m.id, m.run_id, m.queue_name, m.attempts`,
-      [visibilityTimeoutS, MAX_ATTEMPTS]
-    )
-
-    if (reclaimed.rows.length > 0) {
-      log.warn(
-        { count: reclaimed.rows.length, visibilityTimeoutS },
-        'Reclaimed delivered messages whose executor never reported back'
-      )
-    }
-
-    // At the ceiling there is nothing left to retry, so finalize rather than
-    // leave the run running forever.
-    const exhausted = await client.query(
-      `SELECT m.id, m.run_id, m.application_id, m.queue_name, m.deployment_version, m.attempts
-       FROM workflow_queue_messages m
-       JOIN workflow_runs r ON r.id = m.run_id
-       WHERE m.status = 'delivered'
-         AND m.delivered_at < NOW() - make_interval(secs => $1)
-         AND r.status IN ('pending', 'running')
-         AND m.attempts >= $2
-       LIMIT 10`,
-      [visibilityTimeoutS, MAX_ATTEMPTS]
-    )
-
-    for (const msg of exhausted.rows) {
-      await client.query('BEGIN')
-      try {
-        const failure = failureDetail(
-          msg, msg.attempts, 'DELIVERY_TIMEOUT',
-          `Message delivered but never acknowledged within ${visibilityTimeoutS}s, and retries are exhausted`
-        )
-        await lockRunForFailureFinalization(client, msg)
-        await client.query(
-          `UPDATE workflow_queue_messages
-           SET status = 'dead', last_failure = $3, dead_at = NOW(),
-               failure_finalized_at = NOW(), updated_at = NOW()
-           WHERE id = $1 AND application_id = $2 AND status = 'delivered'`,
-          [msg.id, msg.application_id, failure]
-        )
-        await failRun(client, msg, failure)
-        await client.query('COMMIT')
-      } catch (err) {
-        await client.query('ROLLBACK')
-        throw err
-      }
-    }
-    return reclaimed.rows.length
-  } catch (err) {
-    log.error({ err }, 'Delivery reclaim error')
-    return 0
-  }
-}
-
-export function createPoller (pool: pg.Pool, connectionString: string, log: any) {
-  let stopped = false
+  makeCoordinator: (onLeadershipChange: (isLeader: boolean) => void) => Coordinator
+) {
+  // Starts true: nothing is drained until the coordinator grants leadership, so
+  // a wake-up that arrives before then is a no-op rather than an unelected poll.
+  let stopped = true
   let deferredTimer: ReturnType<typeof setTimeout> | null = null
   let reclaimTimer: ReturnType<typeof setInterval> | null = null
   let safetyTimer: ReturnType<typeof setInterval> | null = null
-  let listenClient: pg.Client | null = null
   let executing = false
   let pendingNotify = false
-  // Messages currently being dispatched in their own task. They stay 'pending'
-  // in the DB until their task resolves, so a crash re-dispatches them; this set
-  // just prevents the next poll from picking them up again while in flight.
-  const inFlight = new Set<number>()
+  const inFlight = new Set<string>()
 
-  // Leader election only — dummy channel required by @platformatic/leader@0.1.0
-  // TODO: remove channels once @platformatic/leader supports election-only mode
-  const leader = createLeaderElector({
-    pool,
-    lock: LEADER_LOCK_ID,
-    log,
-    channels: [],
-    onLeadershipChange: (isLeader: boolean) => {
-      if (isLeader) {
-        startPolling()
-      } else {
-        stopPolling()
-      }
-    },
+  const coordinator = makeCoordinator((isLeader: boolean) => {
+    if (isLeader) startPolling()
+    else stopPolling()
   })
 
   function startPolling (): void {
     stopped = false
-    setupListener()
     reclaimTimer = setInterval(runReclaim, RECLAIM_CHECK_INTERVAL)
     safetyTimer = setInterval(() => execute(), SAFETY_POLL_INTERVAL)
     execute()
@@ -347,52 +112,15 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     if (deferredTimer) { clearTimeout(deferredTimer); deferredTimer = null }
     if (reclaimTimer) { clearInterval(reclaimTimer); reclaimTimer = null }
     if (safetyTimer) { clearInterval(safetyTimer); safetyTimer = null }
-    teardownListener()
-  }
-
-  // Dedicated LISTEN client — not from the pool
-  function setupListener (): void {
-    listenClient = new pg.Client({ connectionString })
-    listenClient.on('error', (err) => {
-      log.error({ err }, 'LISTEN connection error')
-      if (!stopped && leader.isLeader()) {
-        setTimeout(() => setupListener(), 1000)
-      }
-    })
-
-    listenClient.connect()
-      .then(() => listenClient!.query(`LISTEN "${DEFERRED_CHANNEL}"`))
-      .then(() => {
-        log.info({ channel: DEFERRED_CHANNEL }, 'Listening to notification channel')
-      })
-      .catch((err) => {
-        log.error({ err }, 'Failed to setup LISTEN connection')
-        if (!stopped && leader.isLeader()) {
-          setTimeout(() => setupListener(), 1000)
-        }
-      })
-
-    listenClient.on('notification', () => {
-      execute()
-    })
-  }
-
-  function teardownListener (): void {
-    if (listenClient) {
-      listenClient.end().catch(() => {})
-      listenClient = null
-    }
   }
 
   async function execute (): Promise<void> {
     if (stopped) return
-
     if (executing) {
       pendingNotify = true
       return
     }
     executing = true
-
     try {
       await executeOnce()
     } finally {
@@ -405,87 +133,78 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   }
 
   async function executeOnce (): Promise<void> {
-    const client = await pool.connect()
     try {
-      // 1. Finalize failures for rows left at the retry ceiling by older pollers.
-      const exhausted = await client.query(
-        `SELECT * FROM workflow_queue_messages
-         WHERE status = 'failed' AND attempts >= 10
-         ORDER BY created_at ASC
-         LIMIT 100`
-      )
-      for (const msg of exhausted.rows) {
-        await handleExhaustedMessage(client, msg)
+      // 1. Finalize messages left at the retry ceiling.
+      for (const msg of await store.claimExhausted(100)) {
+        await store.finalizeExhausted(msg, failureFinalizer)
       }
 
-      // 2. Promote deferred messages that are due
-      await client.query(
-        `UPDATE workflow_queue_messages
-         SET status = 'pending', updated_at = NOW()
-         WHERE status = 'deferred' AND deliver_at <= NOW()`
-      )
+      // 2. Promote deferred and retry-due messages.
+      await store.promoteDue()
 
-      // 3. Retry failed messages that are due
-      await client.query(
-        `UPDATE workflow_queue_messages
-         SET status = 'pending', updated_at = NOW()
-         WHERE status = 'failed' AND next_retry_at <= NOW() AND attempts < 10`
-      )
+      // 3. Outbox relay: hand committed-but-unpublished messages to the broker.
+      // Empty for the Postgres transport, where the two commit together.
+      await relayOutbox()
 
-      // 4. Claim pending messages (excluding those already in flight) and
-      // dispatch each in its own task. We do NOT await the dispatches here:
-      // a single slow or hung handler must not block the poll loop (the
-      // single-flight `executing` guard would otherwise freeze the whole queue
-      // for up to the dispatch bodyTimeout). Each task updates its own message.
+      // 4. Take ready messages from the transport and dispatch each in its own
+      // task. We do NOT await them: one slow handler must not block the loop.
       const capacity = MAX_INFLIGHT - inFlight.size
       if (capacity > 0) {
-        const inFlightIds = Array.from(inFlight)
-        const pending = await client.query(
-          `SELECT * FROM workflow_queue_messages
-           WHERE status = 'pending' AND NOT (id = ANY($1::bigint[]))
-           ORDER BY created_at ASC
-           FOR UPDATE SKIP LOCKED
-           LIMIT $2`,
-          [inFlightIds, capacity]
-        )
-
-        for (const msg of pending.rows) {
-          if (inFlight.has(msg.id)) continue
-          inFlight.add(msg.id)
-          // Fire-and-forget: the task owns its message's result handling.
-          processMessage(msg)
+        for (const leased of await transport.receive(capacity)) {
+          if (inFlight.has(leased.leaseId)) continue
+          inFlight.add(leased.leaseId)
+          processMessage(leased.messageId, leased.leaseId)
         }
       }
 
-      // 5. Schedule next wake-up based on earliest deferred/retry message
-      // Fire-and-forget: must not block executeOnce so pendingNotify re-runs
-      // are not delayed, and so re-runs use their own pool connection for the query
+      // 5. Schedule the next wake-up. Fire-and-forget so pendingNotify re-runs
+      // are not delayed behind it.
       scheduleNextWakeup()
     } catch (err) {
       log.error({ err }, 'Executor error')
-    } finally {
-      client.release()
     }
   }
 
-  // Dispatch a single message and persist its result on a dedicated client, so
-  // a slow handler ties up only its own task (and one connection, briefly, for
-  // the result write) rather than the shared poll loop. The message stays
-  // 'pending' until this resolves; on completion it is removed from `inFlight`
-  // so a failed dispatch is retried on the next poll.
-  async function processMessage (msg: any): Promise<void> {
+  // Commit-then-publish. A crash before publishing leaves the entry for the next
+  // cycle; a crash between publishing and marking republishes, which the
+  // dispatch gate below makes harmless.
+  async function relayOutbox (): Promise<void> {
+    const entries = await store.takeUnpublished(RELAY_BATCH)
+    for (const entry of entries) {
+      try {
+        await transport.publish(entry.messageId, entry)
+        await store.markPublished(entry.messageId)
+      } catch (err) {
+        log.error({ err, messageId: entry.messageId }, 'Outbox publish failed; will retry')
+        return
+      }
+    }
+  }
+
+  async function processMessage (messageId: QueueMessage['id'], leaseId: string): Promise<void> {
+    let claimed: QueueMessage | null = null
     try {
+      // The gate. Postgres decides whether this message may run, not the broker.
+      // A redelivery of something already delivered, dead or failed loses the
+      // compare-and-set and is dropped here, before it can reach the handler.
+      const msg = await store.claimForDispatch(messageId)
+      if (!msg) {
+        await transport.ack(leaseId)
+        return
+      }
+      claimed = msg
+
       const route = await routeMessage(pool, msg.application_id, msg.deployment_version, msg.queue_name)
       if (!route) {
-        const client = await pool.connect()
-        try { await handleNoRoute(client, msg) } finally { client.release() }
+        await onNoRoute(store, msg)
+        await transport.ack(leaseId)
         return
       }
 
       const result = await dispatchMessage({
         url: route.url,
         queueName: msg.queue_name,
-        messageId: msg.id,
+        messageId: msg.id as number,
         payload: msg.payload,
         payloadBytes: msg.payload_bytes,
         payloadEncoding: msg.payload_encoding,
@@ -493,29 +212,36 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       })
       log.info(`[POLLER] dispatched msgId=${msg.id} queue=${msg.queue_name} encoding=${msg.payload_encoding} status=${result.statusCode} timeoutSeconds=${result.timeoutSeconds} success=${result.success}`)
 
-      const client = await pool.connect()
-      try { await handleDispatchResult(client, msg, result, route) } finally { client.release() }
+      await onDispatchResult(store, msg, result, route)
+      await transport.ack(leaseId)
     } catch (err) {
-      // Leave the message 'pending'; removing it from inFlight (below) lets the
-      // next poll retry it.
-      log.error({ err, msgId: msg.id }, 'Dispatch task error')
+      // Nothing was recorded for this delivery, so hand the broker's copy back
+      // rather than leaving it leased. The store still has the row as
+      // 'delivered' and reclaimExpired is the backstop if the release is lost.
+      log.error({ err, msgId: messageId }, 'Dispatch task error')
+      // Return the claim first, then the lease. The other order re-offers a
+      // message the store would still refuse to hand out.
+      if (claimed) {
+        await store.releaseClaim(claimed).catch((claimErr) => {
+          log.error({ err: claimErr, msgId: messageId }, 'Failed to release queue claim')
+        })
+      }
+      await transport.release(leaseId).catch((releaseErr) => {
+        log.error({ err: releaseErr, msgId: messageId }, 'Failed to release queue lease')
+      })
     } finally {
-      inFlight.delete(msg.id)
-      // A slot freed up — nudge the poller in case messages are waiting.
+      inFlight.delete(leaseId)
       if (!stopped) execute()
     }
   }
 
   async function runReclaim (): Promise<void> {
     if (stopped) return
-    const client = await pool.connect()
     try {
-      const reclaimed = await reclaimExpiredDeliveries(client, log)
+      const reclaimed = await store.reclaimExpired()
       if (reclaimed > 0) execute()
     } catch (err) {
       log.error({ err }, 'Delivery reclaim error')
-    } finally {
-      client.release()
     }
   }
 
@@ -525,22 +251,9 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       clearTimeout(deferredTimer)
       deferredTimer = null
     }
-
     try {
-      const result = await pool.query(
-        `SELECT EXTRACT(EPOCH FROM (MIN(next_time) - NOW())) AS secs
-         FROM (
-           SELECT deliver_at AS next_time FROM workflow_queue_messages
-             WHERE status = 'deferred' AND deliver_at > NOW()
-           UNION ALL
-           SELECT next_retry_at AS next_time FROM workflow_queue_messages
-             WHERE status = 'failed' AND next_retry_at > NOW() AND attempts < 10
-         ) t`
-      )
-
-      const secs = result.rows[0]?.secs
-      if (secs !== null && secs !== undefined) {
-        const ms = Math.max(Math.ceil(Number(secs) * 1000), 50)
+      const ms = await store.nextWakeupMs()
+      if (ms !== null) {
         deferredTimer = setTimeout(() => {
           deferredTimer = null
           execute()
@@ -553,156 +266,20 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
 
   return {
     start () {
-      stopped = false
-      leader.start()
+      // Subscribed once, for the life of the process, not per leadership term.
+      // Re-subscribing on every acquisition would leak a connection each time a
+      // leader lost and regained the lock, and the wake-up itself is harmless
+      // when this instance is not the leader: execute() returns early.
+      transport.subscribe(() => execute()).catch((err) => {
+        log.error({ err }, 'Failed to subscribe to queue notifications')
+      })
+      coordinator.start()
     },
     async stop () {
       stopped = true
       stopPolling()
-      teardownListener()
-      await leader.stop()
+      await transport.close()
+      await coordinator.stop()
     },
-  }
-}
-
-export async function handleExhaustedMessage (client: pg.PoolClient, msg: any): Promise<void> {
-  const failure = msg.last_failure || failureDetail(
-    msg,
-    msg.attempts,
-    'RETRY_EXHAUSTED',
-    'Queue delivery exhausted all retry attempts'
-  )
-
-  await client.query('BEGIN')
-  try {
-    await lockRunForFailureFinalization(client, msg)
-    const updated = await client.query(
-      `UPDATE workflow_queue_messages
-       SET status = 'dead', last_failure = $4, dead_at = NOW(), failure_finalized_at = NOW(),
-           next_retry_at = NULL, updated_at = NOW()
-       WHERE id = $1 AND application_id = $2 AND status = 'failed' AND attempts = $3
-       RETURNING id`,
-      [msg.id, msg.application_id, msg.attempts, failure]
-    )
-    if (updated.rows.length > 0) await finalizeFailure(client, msg, failure)
-    await client.query('COMMIT')
-  } catch (err) {
-    await client.query('ROLLBACK')
-    throw err
-  }
-}
-
-export async function handleNoRoute (client: pg.PoolClient, msg: any): Promise<void> {
-  const attempts = msg.attempts + 1
-  const failure = failureDetail(
-    msg,
-    attempts,
-    'ROUTE_NOT_FOUND',
-    'No registered target is available for this queue delivery'
-  )
-
-  await client.query('BEGIN')
-  try {
-    if (isMaxAttempts(attempts)) {
-      await lockRunForFailureFinalization(client, msg)
-      const updated = await client.query(
-        `UPDATE workflow_queue_messages
-         SET status = 'dead', attempts = $4, last_failure = $5, dead_at = NOW(),
-             failure_finalized_at = NOW(), next_retry_at = NULL, updated_at = NOW()
-         WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3
-         RETURNING id`,
-        [msg.id, msg.application_id, msg.attempts, attempts, failure]
-      )
-      if (updated.rows.length > 0) await finalizeFailure(client, msg, failure)
-    } else {
-      const delay = getRetryDelay(attempts)
-      await client.query(
-        `UPDATE workflow_queue_messages
-         SET status = 'failed', attempts = $4, last_failure = $5,
-             next_retry_at = NOW() + make_interval(secs => $6), updated_at = NOW()
-         WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3`,
-        [msg.id, msg.application_id, msg.attempts, attempts, failure, delay / 1000]
-      )
-    }
-    await client.query('COMMIT')
-  } catch (err) {
-    await client.query('ROLLBACK')
-    throw err
-  }
-}
-
-export async function handleDispatchResult (
-  client: pg.PoolClient,
-  msg: any,
-  result: DispatchResult,
-  target?: RegisteredTarget
-): Promise<void> {
-  await client.query('BEGIN')
-  try {
-    if (result.success) {
-      const delivered = await client.query(
-        `UPDATE workflow_queue_messages
-         SET status = 'delivered', delivered_at = NOW(), updated_at = NOW()
-         WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3
-         RETURNING id`,
-        [msg.id, msg.application_id, msg.attempts]
-      )
-
-      if (delivered.rows.length > 0 && typeof result.timeoutSeconds === 'number') {
-        const payloadJson = msg.payload_encoding === 'json' ? JSON.stringify(msg.payload) : null
-        const payloadBytes = msg.payload_encoding === 'cbor' ? msg.payload_bytes : null
-        if (result.timeoutSeconds > 0) {
-          await client.query(
-            `INSERT INTO workflow_queue_messages
-               (queue_name, run_id, deployment_version, application_id,
-                payload, payload_bytes, payload_encoding, status, deliver_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'deferred', NOW() + make_interval(secs => $8))`,
-            [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
-              payloadJson, payloadBytes, msg.payload_encoding, result.timeoutSeconds]
-          )
-          await client.query("SELECT pg_notify('deferred_messages', '{}')")
-        } else if (result.timeoutSeconds === 0) {
-          await client.query(
-            `INSERT INTO workflow_queue_messages
-               (queue_name, run_id, deployment_version, application_id,
-                payload, payload_bytes, payload_encoding, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-            [msg.queue_name, msg.run_id, msg.deployment_version, msg.application_id,
-              payloadJson, payloadBytes, msg.payload_encoding]
-          )
-          await client.query("SELECT pg_notify('deferred_messages', '{}')")
-        }
-      }
-    } else {
-      const attempts = msg.attempts + 1
-      const error = result.error || { code: 'DISPATCH_ERROR', message: 'Target request failed' }
-      const failure = failureDetail(msg, attempts, error.code, error.message, target, result.statusCode)
-
-      if (isMaxAttempts(attempts)) {
-        await lockRunForFailureFinalization(client, msg)
-        const updated = await client.query(
-          `UPDATE workflow_queue_messages
-           SET status = 'dead', attempts = $4, last_failure = $5, dead_at = NOW(),
-               failure_finalized_at = NOW(), next_retry_at = NULL, updated_at = NOW()
-           WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3
-           RETURNING id`,
-          [msg.id, msg.application_id, msg.attempts, attempts, failure]
-        )
-        if (updated.rows.length > 0) await finalizeFailure(client, msg, failure)
-      } else {
-        const delay = getRetryDelay(attempts)
-        await client.query(
-          `UPDATE workflow_queue_messages
-           SET status = 'failed', attempts = $4, last_failure = $5,
-               next_retry_at = NOW() + make_interval(secs => $6), updated_at = NOW()
-           WHERE id = $1 AND application_id = $2 AND status = 'pending' AND attempts = $3`,
-          [msg.id, msg.application_id, msg.attempts, attempts, failure, delay / 1000]
-        )
-      }
-    }
-    await client.query('COMMIT')
-  } catch (err) {
-    await client.query('ROLLBACK')
-    throw err
   }
 }
