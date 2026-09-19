@@ -212,6 +212,14 @@ describe('events', () => {
         },
         {
           event: {
+            eventType: 'step_started',
+            correlationId: 'batch-step-1',
+            specVersion: 6,
+            eventData: { ownerMessageId: 'owner-1' }
+          }
+        },
+        {
+          event: {
             eventType: 'wait_created',
             correlationId: 'batch-wait-1',
             specVersion: 6,
@@ -228,12 +236,14 @@ describe('events', () => {
     })
     assert.equal(first.statusCode, 200)
     const firstBody = JSON.parse(first.body)
-    assert.equal(firstBody.results.length, 2)
-    assert.deepEqual(firstBody.results.map((item: any) => item.status), [200, 200])
+    assert.equal(firstBody.results.length, 3)
+    assert.deepEqual(firstBody.results.map((item: any) => item.status), [200, 200, 200])
     assert.equal(firstBody.results[0].step.status, 'pending')
-    assert.equal(firstBody.results[1].wait.status, 'waiting')
+    assert.equal(firstBody.results[1].step.status, 'running')
+    assert.equal(firstBody.results[2].wait.status, 'waiting')
     assert.equal(firstBody.results[0].event.eventId, 'evnt_00000000000000000000000002')
     assert.equal(firstBody.results[1].event.eventId, 'evnt_00000000000000000000000003')
+    assert.equal(firstBody.results[2].event.eventId, 'evnt_00000000000000000000000004')
     assert.equal(firstBody.results[0].event.createdAt, occurredAt)
 
     // Retrying the same batch is idempotent for the clean fan-out shape: the
@@ -247,14 +257,15 @@ describe('events', () => {
     const retryBody = JSON.parse(retry.body)
     assert.deepEqual(retryBody.results.map((item: any) => item.event.eventId), [
       'evnt_00000000000000000000000002',
-      'evnt_00000000000000000000000003'
+      'evnt_00000000000000000000000003',
+      'evnt_00000000000000000000000004'
     ])
 
     const eventsRes = await ctx.app.inject({
       method: 'GET',
       url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`
     })
-    assert.equal(JSON.parse(eventsRes.body).data.length, 3)
+    assert.equal(JSON.parse(eventsRes.body).data.length, 4)
   })
 
   it('should persist initial attributes and atomically apply attr_set events', async () => {

@@ -347,9 +347,10 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
 
   // Optional SDK v5 batch write. The first implementation intentionally
   // covers only the clean fan-out shape emitted by the latest runtime:
-  // step_created and wait_created on a slot-numbered run. Terminal, hook,
-  // attribute, and retry transitions keep the single-event path so their
-  // ordering and retry contracts remain unchanged.
+  // step_created, wait_created, and an adjacent step_created/step_started
+  // pre-claim pair on a slot-numbered run. Terminal, hook, attribute, and
+  // retry transitions keep the single-event path so their ordering and retry
+  // contracts remain unchanged.
   app.post('/api/v1/apps/:appId/runs/:runId/events/batch', { bodyLimit: 20 * 1024 * 1024 }, async (request) => {
     const { runId: rawRunId } = request.params as { runId: string }
     if (rawRunId === 'null') throw new BadRequest('events.createBatch requires an existing run')
@@ -364,8 +365,14 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
     // not have the clean fan-out semantics implemented here.
     for (const entry of entries) {
       const event = entry?.event
-      if (!event || (event.eventType !== 'step_created' && event.eventType !== 'wait_created')) {
-        throw new BadRequest('events.createBatch currently accepts only step_created and wait_created')
+      if (!event || !['step_created', 'wait_created', 'step_started'].includes(event.eventType)) {
+        throw new BadRequest('events.createBatch currently accepts only step_created, wait_created, and paired step_started')
+      }
+      if (event.eventType === 'step_started') {
+        const previous = entries[entries.indexOf(entry) - 1]?.event
+        if (previous?.eventType !== 'step_created' || previous.correlationId !== event.correlationId || event.eventData?.input !== undefined) {
+          throw new BadRequest('step_started is batchable only as a bare claim immediately after its step_created')
+        }
       }
       if (entry.occurredAt !== undefined) {
         const occurredAt = new Date(entry.occurredAt)
@@ -412,6 +419,55 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           if (!stepRow) throw new BadRequest(`step ${eventBody.correlationId} could not be materialized`)
 
           const eventRow = await insertEvent(client, rawRunId, appId, eventBody, occurredAt)
+          results.push({
+            status: 200,
+            event: formatEvent(eventRow, resolveData),
+            step: formatStep(stepRow, resolveData),
+          })
+          continue
+        }
+
+        if (eventBody.eventType === 'step_started') {
+          const stepResult = await client.query(
+            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
+            [rawRunId, eventBody.correlationId, appId]
+          )
+          if (stepResult.rows.length === 0) throw new BadRequest(`step ${eventBody.correlationId} does not exist`)
+          const step = stepResult.rows[0]
+          if (step.status === 'completed' || step.status === 'cancelled') {
+            throw new BadRequest(`step ${eventBody.correlationId} is already terminal`)
+          }
+
+          // A retry of a committed pair returns the existing step_started row
+          // rather than appending a duplicate. A fresh pair transitions the
+          // pending row exactly as the single-event path does.
+          if (step.status === 'running') {
+            const existingEvent = await client.query(
+              `SELECT * FROM workflow_events
+               WHERE run_id = $1 AND application_id = $2 AND event_type = 'step_started' AND correlation_id = $3
+               ORDER BY id DESC LIMIT 1`,
+              [rawRunId, appId, eventBody.correlationId]
+            )
+            if (existingEvent.rows.length > 0) {
+              results.push({
+                status: 200,
+                event: formatEvent(existingEvent.rows[0], resolveData),
+                step: formatStep(step, resolveData),
+              })
+              continue
+            }
+          }
+
+          const isRetry = step.status === 'pending' && step.started_at !== null
+          const attempt = isRetry ? step.attempt + 1 : (eventBody.eventData?.attempt || step.attempt || 1)
+          await client.query(
+            `UPDATE workflow_steps SET status = 'running', attempt = $3, retry_after = NULL,
+             started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+             WHERE id = $1 AND application_id = $2`,
+            [step.id, appId, attempt]
+          )
+          const eventRow = await insertEvent(client, rawRunId, appId, eventBody, occurredAt)
+          const stepRow = (await client.query('SELECT * FROM workflow_steps WHERE id = $1', [step.id])).rows[0]
           results.push({
             status: 200,
             event: formatEvent(eventRow, resolveData),
