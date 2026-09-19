@@ -2,7 +2,7 @@ import fp from 'fastify-plugin'
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { RunNotFound, BadRequest } from '../lib/errors.ts'
-import { checkRunQuota, checkEventQuota } from '../lib/quotas.ts'
+import { checkRunQuota, checkEventQuota, checkEventBatchQuota } from '../lib/quotas.ts'
 import type pg from 'pg'
 
 const ATTRIBUTE_KEY_MAX_LENGTH = 256
@@ -382,7 +382,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
 
     const appId = request.appId
     const resolveData = (request.query as any).resolveData
-    await checkEventQuota(app, appId, rawRunId)
+    await checkEventBatchQuota(app, appId, rawRunId, entries.length)
 
     const client = await app.pg.connect()
     try {
