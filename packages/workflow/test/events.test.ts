@@ -186,6 +186,77 @@ describe('events', () => {
     assert.equal(events.data.length, 6) // run_created, run_started, step_created, step_started, step_completed, run_completed
   })
 
+  it('should append a clean fan-out through events.createBatch', async () => {
+    const createRes = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 6,
+        eventData: { deploymentId: 'v6', workflowName: 'batch-test', input: {} }
+      }
+    })
+    assert.equal(createRes.statusCode, 200)
+    const runId = JSON.parse(createRes.body).run.runId
+    const occurredAt = new Date('2026-01-02T03:04:05.000Z').toISOString()
+    const payload = {
+      events: [
+        {
+          occurredAt,
+          event: {
+            eventType: 'step_created',
+            correlationId: 'batch-step-1',
+            specVersion: 6,
+            eventData: { stepName: 'first', input: { n: 1 } }
+          }
+        },
+        {
+          event: {
+            eventType: 'wait_created',
+            correlationId: 'batch-wait-1',
+            specVersion: 6,
+            eventData: { resumeAt: '2026-01-02T03:05:05.000Z' }
+          }
+        }
+      ]
+    }
+
+    const first = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch`,
+      payload
+    })
+    assert.equal(first.statusCode, 200)
+    const firstBody = JSON.parse(first.body)
+    assert.equal(firstBody.results.length, 2)
+    assert.deepEqual(firstBody.results.map((item: any) => item.status), [200, 200])
+    assert.equal(firstBody.results[0].step.status, 'pending')
+    assert.equal(firstBody.results[1].wait.status, 'waiting')
+    assert.equal(firstBody.results[0].event.eventId, 'evnt_00000000000000000000000002')
+    assert.equal(firstBody.results[1].event.eventId, 'evnt_00000000000000000000000003')
+    assert.equal(firstBody.results[0].event.createdAt, occurredAt)
+
+    // Retrying the same batch is idempotent for the clean fan-out shape: the
+    // dedupe guards return the existing entities/events at the same slots.
+    const retry = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch`,
+      payload
+    })
+    assert.equal(retry.statusCode, 200)
+    const retryBody = JSON.parse(retry.body)
+    assert.deepEqual(retryBody.results.map((item: any) => item.event.eventId), [
+      'evnt_00000000000000000000000002',
+      'evnt_00000000000000000000000003'
+    ])
+
+    const eventsRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`
+    })
+    assert.equal(JSON.parse(eventsRes.body).data.length, 3)
+  })
+
   it('should persist initial attributes and atomically apply attr_set events', async () => {
     const create = await ctx.app.inject({
       method: 'POST',
