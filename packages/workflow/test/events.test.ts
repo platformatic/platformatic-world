@@ -268,6 +268,85 @@ describe('events', () => {
     assert.equal(JSON.parse(eventsRes.body).data.length, 4)
   })
 
+  it('should reject unsupported or malformed batches atomically', async () => {
+    const create = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 6,
+        eventData: { deploymentId: 'v6', workflowName: 'batch-validation', input: {} }
+      }
+    })
+    const runId = JSON.parse(create.body).run.runId
+
+    const rejectedTypes = [
+      'run_created', 'run_started', 'step_completed', 'step_failed',
+      'step_retrying', 'wait_completed', 'run_completed', 'run_failed',
+      'run_cancelled', 'hook_created', 'hook_received', 'hook_disposed',
+      'attr_set', 'unknown_event'
+    ]
+    for (const eventType of rejectedTypes) {
+      const response = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch`,
+        payload: {
+          events: [{
+            event: {
+              eventType,
+              correlationId: `rejected-${eventType}`,
+              specVersion: 6,
+              eventData: {}
+            }
+          }]
+        }
+      })
+      assert.equal(response.statusCode, 400, eventType)
+    }
+
+    const malformed = [
+      { events: [] },
+      { events: [{ event: { eventType: 'step_started', correlationId: 'orphan', specVersion: 6, eventData: {} } }] },
+      { events: [{ occurredAt: 'not-a-date', event: { eventType: 'step_created', correlationId: 'bad-date', specVersion: 6, eventData: { stepName: 'bad' } } }] },
+      { events: Array.from({ length: 257 }, (_, index) => ({ event: { eventType: 'step_created', correlationId: `too-many-${index}`, specVersion: 6, eventData: { stepName: `too-many-${index}` } } })) }
+    ]
+    for (const payload of malformed) {
+      const response = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch`,
+        payload
+      })
+      assert.equal(response.statusCode, 400)
+    }
+
+    // Prevalidation must happen before the transaction: none of the rejected
+    // batches may leak a step or event into the run log.
+    const events = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`
+    })
+    assert.equal(JSON.parse(events.body).data.length, 1)
+
+    const legacy = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 5,
+        eventData: { deploymentId: 'v5', workflowName: 'batch-legacy', input: {} }
+      }
+    })
+    const legacyRunId = JSON.parse(legacy.body).run.runId
+    const unsupportedVersion = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${legacyRunId}/events/batch`,
+      payload: {
+        events: [{ event: { eventType: 'step_created', correlationId: 'legacy-step', specVersion: 5, eventData: { stepName: 'legacy' } } }]
+      }
+    })
+    assert.equal(unsupportedVersion.statusCode, 400)
+  })
+
   it('should persist initial attributes and atomically apply attr_set events', async () => {
     const create = await ctx.app.inject({
       method: 'POST',

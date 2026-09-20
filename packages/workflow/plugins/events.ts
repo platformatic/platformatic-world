@@ -332,6 +332,46 @@ async function insertEvent (client: pg.PoolClient, runId: string, appId: number,
   return result.rows[0]
 }
 
+// A transport retry of a batch must remain quota-neutral. Count only the
+// distinct event keys that this request could add; *_created and wait_created
+// writes already converge on their existing correlated event, and a paired
+// step_started converges on the existing claim. Keeping this in the same
+// transaction as the run read also makes the preflight agree with the rows
+// the batch will inspect below.
+async function countNewBatchEvents (client: pg.PoolClient, runId: string, appId: number, entries: any[]): Promise<number> {
+  const keys = new Map<string, { eventType: string, correlationId: string }>()
+  for (const [index, entry] of entries.entries()) {
+    const event = entry.event
+    if (typeof event.correlationId === 'string' && event.correlationId.length > 0) {
+      const key = `${event.eventType}\u0000${event.correlationId}`
+      keys.set(key, { eventType: event.eventType, correlationId: event.correlationId })
+    } else {
+      // Supported batch events normally carry a correlation id. Treat a
+      // malformed/missing one as a unique write here; the event-specific path
+      // will still apply its normal validation/constraint semantics.
+      keys.set(`__uncorrelated_${index}`, { eventType: event.eventType, correlationId: `__uncorrelated_${index}` })
+    }
+  }
+
+  const correlated = [...keys.values()].filter((key) => !key.correlationId.startsWith('__uncorrelated_'))
+  if (correlated.length === 0) return keys.size
+
+  const values = correlated.map((_, index) => `($${index * 2 + 3}::text, $${index * 2 + 4}::text)`).join(', ')
+  const params: any[] = [runId, appId]
+  for (const key of correlated) params.push(key.eventType, key.correlationId)
+  const result = await client.query(
+    `SELECT DISTINCT existing.event_type::text AS event_type, existing.correlation_id::text AS correlation_id
+     FROM workflow_events existing
+     JOIN (VALUES ${values}) AS requested(event_type, correlation_id)
+       ON requested.event_type = existing.event_type::text
+      AND requested.correlation_id = existing.correlation_id::text
+     WHERE existing.run_id = $1 AND existing.application_id = $2`,
+    params
+  )
+  const existing = new Set(result.rows.map((row: any) => `${row.event_type}\u0000${row.correlation_id}`))
+  return [...keys.keys()].filter((key) => !existing.has(key)).length
+}
+
 async function eventsPlugin (app: FastifyInstance): Promise<void> {
   // Custom error handler to include meta in error responses (for SDK compatibility)
   app.setErrorHandler((error: any, _request, reply) => {
@@ -382,7 +422,6 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
 
     const appId = request.appId
     const resolveData = (request.query as any).resolveData
-    await checkEventBatchQuota(app, appId, rawRunId, entries.length)
 
     const client = await app.pg.connect()
     try {
@@ -396,6 +435,9 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
       if (!Number.isInteger(runResult.rows[0].spec_version) || runResult.rows[0].spec_version < 6) {
         throw new BadRequest('events.createBatch requires a specVersion 6 or newer run')
       }
+
+      const newEventCount = await countNewBatchEvents(client, rawRunId, appId, entries)
+      await checkEventBatchQuota(app, appId, rawRunId, newEventCount)
 
       const results: any[] = []
       for (const entry of entries) {

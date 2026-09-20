@@ -115,6 +115,75 @@ describe('event quota', () => {
   })
 })
 
+describe('batch event quota', () => {
+  let ctx: TestContext
+  let applicationId: number
+
+  before(async () => {
+    ctx = await setupTest()
+    const appResult = await ctx.app.pg.query(
+      'SELECT id FROM workflow_applications WHERE app_id = $1',
+      [ctx.appId]
+    )
+    applicationId = appResult.rows[0].id
+    await ctx.app.pg.query(
+      `INSERT INTO workflow_app_quotas (application_id, max_runs, max_events_per_run, max_queue_per_minute)
+       VALUES ($1, 10000, 4, 1000)`,
+      [applicationId]
+    )
+  })
+
+  after(async () => {
+    await teardownTest(ctx)
+  })
+
+  it('does not charge a transport retry for already committed events', async () => {
+    const run = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 6,
+        eventData: { workflowName: 'batch-quota-test', deploymentId: 'v6', input: {} }
+      }
+    })
+    assert.equal(run.statusCode, 200)
+    const runId = JSON.parse(run.body).run.runId
+    const payload = {
+      events: [
+        { event: { eventType: 'step_created', correlationId: 'quota-step', specVersion: 6, eventData: { stepName: 'step' } } },
+        { event: { eventType: 'wait_created', correlationId: 'quota-wait', specVersion: 6, eventData: { resumeAt: '2026-01-02T03:04:05.000Z' } } }
+      ]
+    }
+
+    const first = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch`,
+      payload
+    })
+    assert.equal(first.statusCode, 200)
+
+    const retry = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch`,
+      payload
+    })
+    assert.equal(retry.statusCode, 200)
+
+    const overQuota = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch`,
+      payload: {
+        events: [
+          { event: { eventType: 'step_created', correlationId: 'quota-step-2', specVersion: 6, eventData: { stepName: 'step-2' } } },
+          { event: { eventType: 'wait_created', correlationId: 'quota-wait-2', specVersion: 6, eventData: { resumeAt: '2026-01-02T03:04:05.000Z' } } }
+        ]
+      }
+    })
+    assert.equal(overQuota.statusCode, 429)
+  })
+})
+
 describe('queue rate limit', () => {
   let ctx: TestContext
   let applicationId: number
