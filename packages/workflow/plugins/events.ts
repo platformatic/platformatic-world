@@ -8,6 +8,11 @@ import type pg from 'pg'
 const ATTRIBUTE_KEY_MAX_LENGTH = 256
 const ATTRIBUTE_VALUE_MAX_BYTES = 256
 const ATTRIBUTE_MAX_PER_RUN = 64
+// The batch route is valid for slot-numbered runs (spec 6) and remains valid
+// when the service stamps sealed-log runs at spec 7. This is the minimum
+// protocol version advertised by the capability endpoint, not a claim about
+// the deployment's current WORKFLOW_SEALED_LOG mode.
+const SPEC_VERSION_SUPPORTS_BATCH = 6
 
 // Slot-based event identity (spec version 6). An event id is `evnt_` followed
 // by the event's dense, 1-based position in its run's log, zero-padded to 26
@@ -384,6 +389,18 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
     if (error.meta) response.meta = error.meta
     reply.code(statusCode).send(response)
   })
+
+  // Runtime capability advertisement. The Platformatic World client probes this
+  // app-scoped endpoint once at startup before declaring the optional batch
+  // writer to the SDK runtime. Keeping the advertisement separate from the
+  // write route makes an older service a safe 404: a newer client then keeps
+  // using the existing single-event endpoint.
+  app.get('/api/v1/apps/:appId/capabilities', async () => ({
+    specVersion: SPEC_VERSION_SUPPORTS_BATCH,
+    capabilities: {
+      eventsCreateBatch: true,
+    },
+  }))
 
   // Optional SDK v5 batch write. The first implementation intentionally
   // covers only the clean fan-out shape emitted by the latest runtime:

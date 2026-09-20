@@ -13,6 +13,27 @@ import { createEncryption } from './lib/encryption.ts'
 
 export interface PlatformaticWorldConfig extends ClientConfig, QueueConfig {}
 
+interface ServiceCapabilitiesResponse {
+  specVersion?: unknown
+  capabilities?: {
+    eventsCreateBatch?: unknown
+  }
+}
+
+// The batch writer requires both the service-side endpoint and the slot
+// identity protocol. This is deliberately kept as a local structural type so
+// this adapter remains source-compatible with @workflow/world 4.x; the SDK
+// capability field is optional and added by the dependent runtime PR.
+type PlatformaticWorldCapabilities = {
+  eventsCreateBatch?: boolean
+}
+
+export interface PlatformaticWorldWithCapabilities {
+  capabilities: PlatformaticWorldCapabilities
+  /** Resolve backend capabilities once before enabling optional fast paths. */
+  refreshCapabilities(): Promise<void>
+}
+
 // Spec 6 requires slot-numbered event ids, provided by migration 009.
 const SPEC_VERSION_SUPPORTS_SLOT_IDENTITY = 6
 // Atomic slot allocation keeps the log dense, so spec 7 needs no noop writer.
@@ -43,16 +64,47 @@ function mintedSpecVersion (env: NodeJS.ProcessEnv = process.env): number {
     : SPEC_VERSION_SUPPORTS_SLOT_IDENTITY
 }
 
-export function createPlatformaticWorld (config: PlatformaticWorldConfig): World {
+export function createPlatformaticWorld (config: PlatformaticWorldConfig): World & PlatformaticWorldWithCapabilities {
   const client = new HttpClient(config)
+
+  // A capability probe is started exactly once when the World lifecycle (or the
+  // SDK runtime) explicitly refreshes it. Until that promise is awaited the
+  // capability stays absent, so a caller that starts work immediately remains
+  // on the conservative single-event path. Missing endpoints, malformed
+  // responses, and transport errors all fail closed.
+  const capabilities: PlatformaticWorldCapabilities = {}
+  let capabilityProbe: Promise<boolean> | undefined
+  const probeCapabilities = (): Promise<boolean> => {
+    capabilityProbe ??= client.get('/capabilities').then((response: ServiceCapabilitiesResponse) => {
+      const specVersion = response?.specVersion
+      return typeof specVersion === 'number' && Number.isInteger(specVersion) &&
+        specVersion >= SPEC_VERSION_SUPPORTS_SLOT_IDENTITY &&
+        response?.capabilities?.eventsCreateBatch === true
+    }).catch(() => {
+      // An older workflow service returns 404 and an unavailable service is not
+      // evidence of support. The existing single-event API remains unchanged.
+      return false
+    })
+    return capabilityProbe
+  }
+  const refreshCapabilities = async (): Promise<void> => {
+    const supportsBatch = await probeCapabilities()
+    if (supportsBatch) capabilities.eventsCreateBatch = true
+  }
 
   return {
     specVersion: mintedSpecVersion(),
+    // @workflow/world 4.x does not type this optional v5 capability yet. The
+    // upcoming SDK contract adds the same structural field and gates the core
+    // batch path on it.
+    capabilities,
+    refreshCapabilities,
     ...createStorage(client),
     ...createQueue(client, config),
     ...createStreamer(client),
     getEncryptionKeyForRun: createEncryption(client),
     async start () {
+      await refreshCapabilities()
       // In K8s, ICC registers queue handlers with proper FQDN URLs
       // (http://<service>.<namespace>.svc.cluster.local:<port>/...) so the
       // workflow service can dispatch cross-namespace.  Registering here with
@@ -110,7 +162,7 @@ function readAppName (): string {
   }
 }
 
-export function createWorld (options?: Partial<CreateWorldOptions>): World {
+export function createWorld (options?: Partial<CreateWorldOptions>): World & PlatformaticWorldWithCapabilities {
   const serviceUrl = options?.serviceUrl || process.env.PLT_WORLD_SERVICE_URL
   if (!serviceUrl) {
     throw new Error('PLT_WORLD_SERVICE_URL environment variable is required')
