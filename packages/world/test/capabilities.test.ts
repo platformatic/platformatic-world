@@ -112,6 +112,34 @@ test('fails closed when an older service returns 404', async () => {
   }
 })
 
+test('fails closed when the service advertises an old capability protocol', async () => {
+  const server = await capabilityServer({
+    body: { specVersion: 5, capabilities: { eventsCreateBatch: true } },
+  })
+  try {
+    const world = await buildWorld(server.port)
+    assert.notEqual(world.capabilities.eventsCreateBatch, true)
+    assert.equal(server.requests.filter((url) => url.endsWith('/capabilities')).length, 1)
+    await world.close?.()
+  } finally {
+    await server.close()
+  }
+})
+
+test('fails closed when the capability document is malformed', async () => {
+  const server = await capabilityServer({
+    body: { specVersion: '7', capabilities: { eventsCreateBatch: true } },
+  })
+  try {
+    const world = await buildWorld(server.port)
+    assert.notEqual(world.capabilities.eventsCreateBatch, true)
+    assert.equal(server.requests.filter((url) => url.endsWith('/capabilities')).length, 1)
+    await world.close?.()
+  } finally {
+    await server.close()
+  }
+})
+
 test('does not probe capabilities for every event batch', async () => {
   const server = await capabilityServer()
   try {
