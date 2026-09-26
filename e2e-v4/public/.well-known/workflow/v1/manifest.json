@@ -1,9 +1,9 @@
 {
   "version": "1.0.0",
   "steps": {
-    "node_modules/.pnpm/workflow@4.5.0_@nestjs+common@11.1.27_reflect-metadata@0.2.2_rxjs@7.8.2__@nestjs+core@1_542b37e7752bae24f63e6944dfe110e1/node_modules/workflow/dist/stdlib.js": {
+    "node_modules/.pnpm/workflow@4.8.9_@nestjs+common@12.0.3_reflect-metadata@0.2.2_rxjs@7.8.2_supports-color@8_70cce0ebfdb5c1b11180eca97d84d382/node_modules/workflow/dist/stdlib.js": {
       "fetch": {
-        "stepId": "step//workflow@4.5.0//fetch"
+        "stepId": "step//workflow@4.8.9//fetch"
       }
     },
     "workflows/simple.ts": {
@@ -11,7 +11,7 @@
         "stepId": "step//./workflows/simple//add"
       }
     },
-    "node_modules/.pnpm/workflow@4.5.0_@nestjs+common@11.1.27_reflect-metadata@0.2.2_rxjs@7.8.2__@nestjs+core@1_542b37e7752bae24f63e6944dfe110e1/node_modules/workflow/dist/internal/builtins.js": {
+    "node_modules/.pnpm/workflow@4.8.9_@nestjs+common@12.0.3_reflect-metadata@0.2.2_rxjs@7.8.2_supports-color@8_70cce0ebfdb5c1b11180eca97d84d382/node_modules/workflow/dist/internal/builtins.js": {
       "__builtin_response_array_buffer": {
         "stepId": "__builtin_response_array_buffer"
       },
@@ -52,6 +52,33 @@
               }
             },
             {
+              "id": "node_0",
+              "type": "step",
+              "data": {
+                "label": "add",
+                "nodeKind": "step",
+                "stepId": "step//./workflows/simple//add"
+              }
+            },
+            {
+              "id": "node_1",
+              "type": "step",
+              "data": {
+                "label": "add",
+                "nodeKind": "step",
+                "stepId": "step//./workflows/simple//add"
+              }
+            },
+            {
+              "id": "node_2",
+              "type": "step",
+              "data": {
+                "label": "add",
+                "nodeKind": "step",
+                "stepId": "step//./workflows/simple//add"
+              }
+            },
+            {
               "id": "end",
               "type": "workflowEnd",
               "data": {
@@ -62,8 +89,26 @@
           ],
           "edges": [
             {
-              "id": "e_start_end",
+              "id": "e_start_node_0",
               "source": "start",
+              "target": "node_0",
+              "type": "default"
+            },
+            {
+              "id": "e_node_0_node_1",
+              "source": "node_0",
+              "target": "node_1",
+              "type": "default"
+            },
+            {
+              "id": "e_node_1_node_2",
+              "source": "node_1",
+              "target": "node_2",
+              "type": "default"
+            },
+            {
+              "id": "e_node_2_end",
+              "source": "node_2",
               "target": "end",
               "type": "default"
             }
@@ -116,6 +161,15 @@
               }
             },
             {
+              "id": "node_0",
+              "type": "step",
+              "data": {
+                "label": "retryUntilAttempt3",
+                "nodeKind": "step",
+                "stepId": "step//./workflows/compat//retryUntilAttempt3"
+              }
+            },
+            {
               "id": "end",
               "type": "workflowEnd",
               "data": {
@@ -126,8 +180,14 @@
           ],
           "edges": [
             {
-              "id": "e_start_end",
+              "id": "e_start_node_0",
               "source": "start",
+              "target": "node_0",
+              "type": "default"
+            },
+            {
+              "id": "e_node_0_end",
+              "source": "node_0",
               "target": "end",
               "type": "default"
             }
@@ -192,6 +252,24 @@
               }
             },
             {
+              "id": "node_0",
+              "type": "step",
+              "data": {
+                "label": "writeTextToStream",
+                "nodeKind": "step",
+                "stepId": "step//./workflows/compat//writeTextToStream"
+              }
+            },
+            {
+              "id": "node_1",
+              "type": "step",
+              "data": {
+                "label": "closeOutputStream",
+                "nodeKind": "step",
+                "stepId": "step//./workflows/compat//closeOutputStream"
+              }
+            },
+            {
               "id": "end",
               "type": "workflowEnd",
               "data": {
@@ -202,8 +280,20 @@
           ],
           "edges": [
             {
-              "id": "e_start_end",
+              "id": "e_start_node_0",
               "source": "start",
+              "target": "node_0",
+              "type": "default"
+            },
+            {
+              "id": "e_node_0_node_1",
+              "source": "node_0",
+              "target": "node_1",
+              "type": "default"
+            },
+            {
+              "id": "e_node_1_end",
+              "source": "node_1",
               "target": "end",
               "type": "default"
             }
