@@ -252,15 +252,17 @@ test('createQueueHandler accepts a health check for the alternate endpoint', asy
   await world.close!()
 })
 
-test('world declares specVersion 7 (sealed log)', () => {
+test('world declares specVersion 8 (hook force claim)', () => {
   const world = createPlatformaticWorld({
     serviceUrl: 'http://localhost:9999',
     appId: 'app',
     deploymentVersion: 'v1',
   })
   assert.ok(world.specVersion > SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT)
-  // The v4 type-only dependency does not export the spec 7 constant.
-  assert.equal(world.specVersion, 7)
+  // Literal because the v4 type-only dependency exports no 5.x spec constant.
+  // e2e-v5 asserts the same value against the real SPEC_VERSION_CURRENT, so a
+  // mint that stops tracking current fails there even when this still passes.
+  assert.equal(world.specVersion, 8)
 })
 
 test('WORKFLOW_SEALED_LOG kill switch stamps specVersion 6', () => {
@@ -277,10 +279,10 @@ test('WORKFLOW_SEALED_LOG kill switch stamps specVersion 6', () => {
     }
     for (const on of ['1', 'true', '']) {
       process.env.WORKFLOW_SEALED_LOG = on
-      assert.equal(build(), 7, `${JSON.stringify(on)} should keep the sealed log`)
+      assert.equal(build(), 8, `${JSON.stringify(on)} should keep the sealed log`)
     }
     delete process.env.WORKFLOW_SEALED_LOG
-    assert.equal(build(), 7)
+    assert.equal(build(), 8)
   } finally {
     if (previous === undefined) delete process.env.WORKFLOW_SEALED_LOG
     else process.env.WORKFLOW_SEALED_LOG = previous
@@ -299,11 +301,11 @@ test('an unparseable WORKFLOW_SEALED_LOG warns once and keeps the default', () =
       appId: 'app',
       deploymentVersion: 'v1',
     }).specVersion
-    assert.equal(build(), 7)
+    assert.equal(build(), 8)
     assert.equal(warnings.length, 1)
     assert.match(warnings[0], /WORKFLOW_SEALED_LOG/)
     assert.match(warnings[0], /expected 0\/1\/true\/false/)
-    assert.equal(build(), 7)
+    assert.equal(build(), 8)
     assert.equal(warnings.length, 1)
   } finally {
     console.warn = originalWarn
