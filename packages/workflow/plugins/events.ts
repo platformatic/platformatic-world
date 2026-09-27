@@ -2,12 +2,17 @@ import fp from 'fastify-plugin'
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { RunNotFound, BadRequest } from '../lib/errors.ts'
-import { checkRunQuota, checkEventQuota } from '../lib/quotas.ts'
+import { checkRunQuota, checkEventQuota, checkEventBatchQuota } from '../lib/quotas.ts'
 import type pg from 'pg'
 
 const ATTRIBUTE_KEY_MAX_LENGTH = 256
 const ATTRIBUTE_VALUE_MAX_BYTES = 256
 const ATTRIBUTE_MAX_PER_RUN = 64
+// The batch route is valid for slot-numbered runs (spec 6) and remains valid
+// when the service stamps sealed-log runs at spec 7. This is the minimum
+// protocol version advertised by the capability endpoint, not a claim about
+// the deployment's current WORKFLOW_SEALED_LOG mode.
+const SPEC_VERSION_SUPPORTS_BATCH = 6
 
 // Slot-based event identity (spec version 6). An event id is `evnt_` followed
 // by the event's dense, 1-based position in its run's log, zero-padded to 26
@@ -282,20 +287,20 @@ const DEDUPED_EVENT_TYPES = new Set([
   'wait_completed',
 ])
 
-async function insertEvent (client: pg.PoolClient, runId: string, appId: number, body: any): Promise<any> {
+async function insertEvent (client: pg.PoolClient, runId: string, appId: number, body: any, occurredAt?: Date | string): Promise<any> {
   const correlationId = body.correlationId || null
   const eventData = body.eventData ? encodeData(body.eventData) : null
 
   if (correlationId && DEDUPED_EVENT_TYPES.has(body.eventType)) {
     const inserted = await client.query(
-      `INSERT INTO workflow_events (run_id, application_id, event_type, correlation_id, event_data, spec_version)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO workflow_events (run_id, application_id, event_type, correlation_id, event_data, spec_version, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()))
        ON CONFLICT (run_id, event_type, correlation_id)
          WHERE event_type IN ('wait_created', 'wait_completed')
-               AND correlation_id IS NOT NULL
+         AND correlation_id IS NOT NULL
          DO NOTHING
        RETURNING *`,
-      [runId, appId, body.eventType, correlationId, eventData, body.specVersion || null]
+      [runId, appId, body.eventType, correlationId, eventData, body.specVersion || null, occurredAt ?? null]
     )
     if (inserted.rows.length > 0) return inserted.rows[0]
 
@@ -324,12 +329,52 @@ async function insertEvent (client: pg.PoolClient, runId: string, appId: number,
   }
 
   const result = await client.query(
-    `INSERT INTO workflow_events (run_id, application_id, event_type, correlation_id, event_data, spec_version)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO workflow_events (run_id, application_id, event_type, correlation_id, event_data, spec_version, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()))
      RETURNING *`,
-    [runId, appId, body.eventType, correlationId, eventData, body.specVersion || null]
+    [runId, appId, body.eventType, correlationId, eventData, body.specVersion || null, occurredAt ?? null]
   )
   return result.rows[0]
+}
+
+// A transport retry of a batch must remain quota-neutral. Count only the
+// distinct event keys that this request could add; *_created and wait_created
+// writes already converge on their existing correlated event, and a paired
+// step_started converges on the existing claim. Keeping this in the same
+// transaction as the run read also makes the preflight agree with the rows
+// the batch will inspect below.
+async function countNewBatchEvents (client: pg.PoolClient, runId: string, appId: number, entries: any[]): Promise<number> {
+  const keys = new Map<string, { eventType: string, correlationId: string }>()
+  for (const [index, entry] of entries.entries()) {
+    const event = entry.event
+    if (typeof event.correlationId === 'string' && event.correlationId.length > 0) {
+      const key = `${event.eventType}\u0000${event.correlationId}`
+      keys.set(key, { eventType: event.eventType, correlationId: event.correlationId })
+    } else {
+      // Supported batch events normally carry a correlation id. Treat a
+      // malformed/missing one as a unique write here; the event-specific path
+      // will still apply its normal validation/constraint semantics.
+      keys.set(`__uncorrelated_${index}`, { eventType: event.eventType, correlationId: `__uncorrelated_${index}` })
+    }
+  }
+
+  const correlated = [...keys.values()].filter((key) => !key.correlationId.startsWith('__uncorrelated_'))
+  if (correlated.length === 0) return keys.size
+
+  const values = correlated.map((_, index) => `($${index * 2 + 3}::text, $${index * 2 + 4}::text)`).join(', ')
+  const params: any[] = [runId, appId]
+  for (const key of correlated) params.push(key.eventType, key.correlationId)
+  const result = await client.query(
+    `SELECT DISTINCT existing.event_type::text AS event_type, existing.correlation_id::text AS correlation_id
+     FROM workflow_events existing
+     JOIN (VALUES ${values}) AS requested(event_type, correlation_id)
+       ON requested.event_type = existing.event_type::text
+      AND requested.correlation_id = existing.correlation_id::text
+     WHERE existing.run_id = $1 AND existing.application_id = $2`,
+    params
+  )
+  const existing = new Set(result.rows.map((row: any) => `${row.event_type}\u0000${row.correlation_id}`))
+  return [...keys.keys()].filter((key) => !existing.has(key)).length
 }
 
 async function eventsPlugin (app: FastifyInstance): Promise<void> {
@@ -343,6 +388,185 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
     }
     if (error.meta) response.meta = error.meta
     reply.code(statusCode).send(response)
+  })
+
+  // Runtime capability advertisement. The Platformatic World client probes this
+  // app-scoped endpoint once at startup before declaring the optional batch
+  // writer to the SDK runtime. Keeping the advertisement separate from the
+  // write route makes an older service a safe 404: a newer client then keeps
+  // using the existing single-event endpoint.
+  app.get('/api/v1/apps/:appId/capabilities', async () => ({
+    specVersion: SPEC_VERSION_SUPPORTS_BATCH,
+    capabilities: {
+      eventsCreateBatch: true,
+    },
+  }))
+
+  // Optional SDK v5 batch write. The first implementation intentionally
+  // covers only the clean fan-out shape emitted by the latest runtime:
+  // step_created, wait_created, and an adjacent step_created/step_started
+  // pre-claim pair on a slot-numbered run. Terminal, hook, attribute, and
+  // retry transitions keep the single-event path so their ordering and retry
+  // contracts remain unchanged.
+  app.post('/api/v1/apps/:appId/runs/:runId/events/batch', { bodyLimit: 20 * 1024 * 1024 }, async (request) => {
+    const { runId: rawRunId } = request.params as { runId: string }
+    if (rawRunId === 'null') throw new BadRequest('events.createBatch requires an existing run')
+
+    const body = request.body as any
+    const entries = Array.isArray(body?.events) ? body.events : []
+    if (entries.length === 0) throw new BadRequest('events.createBatch requires at least one event')
+    if (entries.length > 256) throw new BadRequest('events.createBatch supports at most 256 events')
+
+    // Validate the whole shape before opening a transaction. A request-level
+    // rejection is safer than partially applying a batch whose event types do
+    // not have the clean fan-out semantics implemented here.
+    for (const entry of entries) {
+      const event = entry?.event
+      if (!event || !['step_created', 'wait_created', 'step_started'].includes(event.eventType)) {
+        throw new BadRequest('events.createBatch currently accepts only step_created, wait_created, and paired step_started')
+      }
+      if (event.eventType === 'step_started') {
+        const previous = entries[entries.indexOf(entry) - 1]?.event
+        if (previous?.eventType !== 'step_created' || previous.correlationId !== event.correlationId || event.eventData?.input !== undefined) {
+          throw new BadRequest('step_started is batchable only as a bare claim immediately after its step_created')
+        }
+      }
+      if (entry.occurredAt !== undefined) {
+        const occurredAt = new Date(entry.occurredAt)
+        if (Number.isNaN(occurredAt.getTime())) throw new BadRequest('occurredAt must be a valid date')
+      }
+    }
+
+    const appId = request.appId
+    const resolveData = (request.query as any).resolveData
+
+    const client = await app.pg.connect()
+    try {
+      await client.query('BEGIN')
+
+      const runResult = await client.query(
+        'SELECT spec_version FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR SHARE',
+        [rawRunId, appId]
+      )
+      if (runResult.rows.length === 0) throw new RunNotFound(rawRunId)
+      if (!Number.isInteger(runResult.rows[0].spec_version) || runResult.rows[0].spec_version < 6) {
+        throw new BadRequest('events.createBatch requires a specVersion 6 or newer run')
+      }
+
+      const newEventCount = await countNewBatchEvents(client, rawRunId, appId, entries)
+      await checkEventBatchQuota(app, appId, rawRunId, newEventCount)
+
+      const results: any[] = []
+      for (const entry of entries) {
+        const eventBody = entry.event
+        const occurredAt = entry.occurredAt === undefined ? undefined : new Date(entry.occurredAt)
+
+        if (eventBody.eventType === 'step_created') {
+          const eventData = eventBody.eventData || {}
+          const input = encodeData(eventData.input)
+          const inserted = await client.query(
+            `INSERT INTO workflow_steps (id, run_id, application_id, correlation_id, step_name, status, input, spec_version)
+             VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
+             ON CONFLICT (run_id, correlation_id, step_name) DO NOTHING
+             RETURNING *`,
+            [randomUUID(), rawRunId, appId, eventBody.correlationId, eventData.stepName, input, eventBody.specVersion || null]
+          )
+          const stepRow = inserted.rows[0] || (await client.query(
+            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND step_name = $3 LIMIT 1',
+            [rawRunId, eventBody.correlationId, eventData.stepName]
+          )).rows[0]
+          if (!stepRow) throw new BadRequest(`step ${eventBody.correlationId} could not be materialized`)
+
+          const eventRow = await insertEvent(client, rawRunId, appId, eventBody, occurredAt)
+          results.push({
+            status: 200,
+            event: formatEvent(eventRow, resolveData),
+            step: formatStep(stepRow, resolveData),
+          })
+          continue
+        }
+
+        if (eventBody.eventType === 'step_started') {
+          const stepResult = await client.query(
+            'SELECT * FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
+            [rawRunId, eventBody.correlationId, appId]
+          )
+          if (stepResult.rows.length === 0) throw new BadRequest(`step ${eventBody.correlationId} does not exist`)
+          const step = stepResult.rows[0]
+          if (step.status === 'completed' || step.status === 'cancelled') {
+            throw new BadRequest(`step ${eventBody.correlationId} is already terminal`)
+          }
+
+          // A retry of a committed pair returns the existing step_started row
+          // rather than appending a duplicate. A fresh pair transitions the
+          // pending row exactly as the single-event path does.
+          if (step.status === 'running') {
+            const existingEvent = await client.query(
+              `SELECT * FROM workflow_events
+               WHERE run_id = $1 AND application_id = $2 AND event_type = 'step_started' AND correlation_id = $3
+               ORDER BY id DESC LIMIT 1`,
+              [rawRunId, appId, eventBody.correlationId]
+            )
+            if (existingEvent.rows.length > 0) {
+              results.push({
+                status: 200,
+                event: formatEvent(existingEvent.rows[0], resolveData),
+                step: formatStep(step, resolveData),
+              })
+              continue
+            }
+          }
+
+          const isRetry = step.status === 'pending' && step.started_at !== null
+          const attempt = isRetry ? step.attempt + 1 : (eventBody.eventData?.attempt || step.attempt || 1)
+          await client.query(
+            `UPDATE workflow_steps SET status = 'running', attempt = $3, retry_after = NULL,
+             started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+             WHERE id = $1 AND application_id = $2`,
+            [step.id, appId, attempt]
+          )
+          const eventRow = await insertEvent(client, rawRunId, appId, eventBody, occurredAt)
+          const stepRow = (await client.query('SELECT * FROM workflow_steps WHERE id = $1', [step.id])).rows[0]
+          results.push({
+            status: 200,
+            event: formatEvent(eventRow, resolveData),
+            step: formatStep(stepRow, resolveData),
+          })
+          continue
+        }
+
+        const existingWait = await client.query(
+          'SELECT * FROM workflow_waits WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 LIMIT 1',
+          [rawRunId, eventBody.correlationId, appId]
+        )
+        let waitRow = existingWait.rows[0]
+        if (!waitRow) {
+          const eventData = eventBody.eventData || {}
+          const resumeAt = eventData.resumeAt ? new Date(eventData.resumeAt) : null
+          waitRow = (await client.query(
+            `INSERT INTO workflow_waits (id, run_id, application_id, correlation_id, status, resume_at, spec_version)
+             VALUES ($1, $2, $3, $4, 'waiting', $5, $6)
+             RETURNING *`,
+            [randomUUID(), rawRunId, appId, eventBody.correlationId, resumeAt, eventBody.specVersion || null]
+          )).rows[0]
+        }
+
+        const eventRow = await insertEvent(client, rawRunId, appId, eventBody, occurredAt)
+        results.push({
+          status: 200,
+          event: formatEvent(eventRow, resolveData),
+          wait: formatWait(waitRow),
+        })
+      }
+
+      await client.query('COMMIT')
+      return { results }
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
   })
 
   // Create event (main write path)

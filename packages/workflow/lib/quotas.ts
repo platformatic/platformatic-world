@@ -56,7 +56,7 @@ export async function checkRunQuota (app: FastifyInstance, appId: number): Promi
   }
 }
 
-export async function checkEventQuota (app: FastifyInstance, appId: number, runId: string): Promise<void> {
+export async function checkEventBatchQuota (app: FastifyInstance, appId: number, runId: string, additionalEvents = 1): Promise<void> {
   const quotas = await getQuotas(app, appId)
 
   const result = await app.pg.query(
@@ -64,11 +64,15 @@ export async function checkEventQuota (app: FastifyInstance, appId: number, runI
     [appId, runId]
   )
 
-  if (result.rows[0].count >= quotas.maxEventsPerRun) {
+  if (result.rows[0].count + additionalEvents > quotas.maxEventsPerRun) {
     const err = new Error('Event quota exceeded for this run') as any
     err.statusCode = 429
     throw err
   }
+}
+
+export async function checkEventQuota (app: FastifyInstance, appId: number, runId: string): Promise<void> {
+  return checkEventBatchQuota(app, appId, runId, 1)
 }
 
 export async function checkQueueRateLimit (app: FastifyInstance, appId: number): Promise<void> {
