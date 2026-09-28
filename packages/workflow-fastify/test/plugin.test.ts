@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Fastify from 'fastify'
-import workflowFastify from '../src/index.ts'
+import workflowFastify from '../dist/index.js'
 
 // Build a throwaway `.well-known/workflow/v1` tree with tiny stand-in handlers:
 // flow/step as CommonJS (as the real standalone build emits them) and webhook as
@@ -181,7 +181,7 @@ export const POST = async (req) => new Response(JSON.stringify({ handler: '${lab
 })
 `
   await writeFile(join(base, 'flow.mjs'), mjs('flow', 200))
-  await writeFile(join(base, 'step.mjs'), mjs('step', 200))
+  await writeFile(join(base, '__step_registrations.mjs'), 'export const steps = {}\n')
   await writeFile(join(base, 'webhook.mjs'), mjs('webhook', 202))
   await writeFile(join(base, 'manifest.json'), JSON.stringify({ workflows: {} }))
 
@@ -192,6 +192,25 @@ export const POST = async (req) => new Response(JSON.stringify({ handler: '${lab
   assert.strictEqual(flow.statusCode, 200)
   assert.strictEqual(flow.json().handler, 'flow')
 
+  const step = await app.inject({ method: 'POST', url: '/.well-known/workflow/v1/step', payload: 'x' })
+  assert.strictEqual(step.statusCode, 404)
+
   const hook = await app.inject({ method: 'GET', url: '/.well-known/workflow/v1/webhook/abc' })
   assert.strictEqual(hook.statusCode, 202)
+})
+
+test('rejects build output with neither a v4 step handler nor v5 step registrations', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wf-fastify-no-step-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const base = join(dir, '.well-known/workflow/v1')
+  await mkdir(base, { recursive: true })
+  await writeFile(join(base, 'flow.mjs'), 'export const POST = async () => new Response("ok")\n')
+  await writeFile(join(base, 'webhook.mjs'), 'export const POST = async () => new Response("ok")\n')
+
+  const app = Fastify()
+  t.after(() => app.close())
+  await assert.rejects(
+    app.register(workflowFastify, { buildDir: dir, register: false }).ready(),
+    /workflow handler step not found/
+  )
 })

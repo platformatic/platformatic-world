@@ -53,6 +53,11 @@ import {
   stepFunctionAsStartArgWorkflow,
 } from '@/workflows/e2e'
 import { addTenWorkflow as addTenWorkflowDuplicate } from '@/workflows/98_duplicate_case'
+import {
+  hookSleepRaceProbeWorkflow,
+  repeatedRemoteStepWorkflow,
+  runIdProbeWorkflow,
+} from '@/workflows/remote-steps-probes'
 
 const workflows: Record<string, (...args: any[]) => any> = {
   addTenWorkflow,
@@ -101,6 +106,9 @@ const workflows: Record<string, (...args: any[]) => any> = {
   outputStreamWorkflow,
   outputStreamInsideStepWorkflow,
   stepFunctionAsStartArgWorkflow,
+  hookSleepRaceProbeWorkflow,
+  repeatedRemoteStepWorkflow,
+  runIdProbeWorkflow,
 }
 
 export async function POST (request: Request) {

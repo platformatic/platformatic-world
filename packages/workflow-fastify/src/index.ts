@@ -4,6 +4,31 @@ import { readFile, writeFile, access } from 'node:fs/promises'
 import fp from 'fastify-plugin'
 import { createWorld } from '@platformatic/world'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import {
+  mountRemoteHandlerPushRoutes,
+  type RemoteHandlerPushOptions,
+} from './push.js'
+
+export {
+  createRemoteHandlerPushReceiver,
+  createRemoteHandlerPushSignature,
+  createValkeyRemoteHandlerPushReplayStore,
+  mountRemoteHandlerPushRoutes,
+  REMOTE_HANDLER_PUSH_BODY_LIMIT,
+  REMOTE_HANDLER_PUSH_REPLAY_TTL_MS,
+  REMOTE_HANDLER_PUSH_TIMESTAMP_WINDOW_SECONDS,
+} from './push.js'
+export type {
+  RemoteHandlerPushIdentity,
+  RemoteHandlerPushManifest,
+  RemoteHandlerPushOptions,
+  RemoteHandlerPushOutcome,
+  RemoteHandlerPushReplayStore,
+  RemoteHandlerPushRequest,
+  RemoteHandlerPushResponse,
+  RemoteHandlerPushRuntime,
+  RemoteHandlerPushStatus,
+} from './push.js'
 
 export interface WorkflowFastifyOptions {
   // Directory containing the built `.well-known/workflow/v1` artifacts produced
@@ -12,6 +37,9 @@ export interface WorkflowFastifyOptions {
   // Register this app's queue handler with the workflow engine on boot.
   // Defaults to true. A no-op in Kubernetes/ICC (ICC registers handlers there).
   register?: boolean
+  // Optionally mount the authenticated remote workflow push adapter on this
+  // Fastify application. All runtime credentials and storage are injected.
+  push?: RemoteHandlerPushOptions
 }
 
 // Shape of `.well-known/workflow/v1/manifest.json` (only the fields used here).
@@ -39,7 +67,8 @@ type WebHandler = (req: Request) => Promise<Response>
 const PREFIX = '/.well-known/workflow/v1'
 
 // Fastify plugin that mounts the Vercel Workflow SDK callback handlers
-// (flow/step/webhook) produced by the standalone build and wires them to
+// (flow/webhook in SDK v5, flow/step/webhook in SDK v4) produced by the
+// standalone build and wires them to
 // `@platformatic/world`. It also parses the manifest and decorates the app with
 // `workflows` (name -> workflowId) so callers can trigger runs without re-reading
 // the manifest. The app keeps full ownership of its lifecycle; this plugin only
@@ -50,9 +79,9 @@ async function workflowFastify (
 ): Promise<void> {
   const base = join(opts.buildDir ?? process.cwd(), '.well-known/workflow/v1')
 
-  // The standalone build emits one bundle per handler. The extension and module
-  // format vary by SDK version: v5 emits ESM `.mjs`; v4 emits `.js` (flow/step
-  // CommonJS, webhook ESM). Resolve the actual file by base name, and for an
+  // The extension and module format vary by SDK version: v5 emits combined ESM
+  // `.mjs` flow/webhook handlers; v4 emits `.js` flow/step handlers as CommonJS
+  // and webhook as ESM. Resolve the actual file by base name, and for an
   // ambiguous `.js` normalize it to .cjs/.mjs (sniffed) so the host app's
   // package.json "type" is irrelevant. Then import and pick the POST export
   // (named for ESM, or off the default export for CommonJS).
@@ -80,11 +109,18 @@ async function workflowFastify (
     if (typeof handler !== 'function') throw new Error(`workflow handler ${name} has no POST export`)
     return handler
   }
-  const [flow, step, webhook] = await Promise.all([
+  const stepExists = (await Promise.all(
+    ['.mjs', '.cjs', '.js'].map(async (ext) => exists(join(base, `step${ext}`)))
+  )).some(Boolean)
+  if (!stepExists && !await exists(join(base, '__step_registrations.mjs'))) {
+    throw new Error(`workflow handler step not found in ${base}`)
+  }
+
+  const [flow, webhook] = await Promise.all([
     load('flow'),
-    load('step'),
     load('webhook'),
   ])
+  const step = stepExists ? await load('step') : undefined
 
   // Parse the manifest and expose name -> workflowId so callers don't re-read it.
   const manifestRaw = await readFile(join(base, 'manifest.json'), 'utf8')
@@ -107,9 +143,10 @@ async function workflowFastify (
   // content-type parser they need (workflow bodies are JSON or CBOR, consumed as
   // a Buffer) does not affect the parent app's own JSON routes.
   await app.register(async (routes) => {
+    routes.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) => done(null, body))
     routes.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, body, done) => done(null, body))
     routes.post(`${PREFIX}/flow`, mount(flow))
-    routes.post(`${PREFIX}/step`, mount(step))
+    if (step !== undefined) routes.post(`${PREFIX}/step`, mount(step))
     routes.post(`${PREFIX}/webhook/:token`, mount(webhook))
     routes.get(`${PREFIX}/webhook/:token`, mount(webhook))
     routes.get(`${PREFIX}/manifest.json`, async (_req, reply) => {
@@ -117,6 +154,8 @@ async function workflowFastify (
       return reply.send(manifestRaw)
     })
   })
+
+  if (opts.push) await mountRemoteHandlerPushRoutes(app, opts.push)
 
   if (opts.register !== false) {
     const world = createWorld()

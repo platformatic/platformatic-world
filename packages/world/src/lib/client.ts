@@ -14,9 +14,11 @@ export type Encoding = 'json' | 'cbor'
 
 function createAPIError (statusCode: number, text: string): Error {
   let meta: any
+  let code: string | undefined
   try {
     const parsed = JSON.parse(text)
     meta = parsed.meta
+    code = parsed.code
   } catch {
     // Not JSON
   }
@@ -29,6 +31,7 @@ function createAPIError (statusCode: number, text: string): Error {
   }
   err.status = statusCode
   err.statusCode = statusCode
+  if (code) err.code = code
   if (meta) err.meta = meta
   return err
 }

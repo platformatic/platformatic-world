@@ -40,8 +40,9 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
 
     if (envelope.idempotencyKey) {
       const existing = await app.pg.query(
-        'SELECT id FROM workflow_queue_messages WHERE idempotency_key = $1',
-        [envelope.idempotencyKey]
+        `SELECT id FROM workflow_queue_messages
+         WHERE application_id = $1 AND idempotency_key = $2`,
+        [appId, envelope.idempotencyKey]
       )
       if (existing.rows.length > 0) {
         throw new DuplicateIdempotencyKey(envelope.idempotencyKey)

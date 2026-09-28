@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify'
 
 const ulid = monotonicFactory()
 import { RunNotFound, BadRequest } from '../lib/errors.ts'
+import { cancelWorkflowRun } from '../lib/run-cancellation.ts'
 import { workflowQueueName } from '../queue/names.ts'
 import { formatRun, encodeData } from './events.ts'
 
@@ -86,50 +87,12 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
     try {
       await client.query('BEGIN')
 
-      const result = await client.query(
-        `UPDATE workflow_runs SET status = 'cancelled', completed_at = NOW(), updated_at = NOW()
-         WHERE id = $1 AND application_id = $2 AND status IN ('pending', 'running')
-         RETURNING *`,
-        [runId, appId]
-      )
-
-      if (result.rows.length === 0) {
-        const existing = await client.query(
-          'SELECT status FROM workflow_runs WHERE id = $1 AND application_id = $2',
-          [runId, appId]
-        )
-        if (existing.rows.length === 0) throw new RunNotFound(runId)
-        throw new BadRequest(`run is already in terminal state: ${existing.rows[0].status}`)
-      }
-
-      // Clean up hooks and waits
-      await client.query(
-        `UPDATE workflow_hooks SET status = 'disposed', disposed_at = NOW()
-         WHERE run_id = $1 AND application_id = $2 AND status != 'disposed'`,
-        [runId, appId]
-      )
-      await client.query(
-        `UPDATE workflow_waits SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-         WHERE run_id = $1 AND application_id = $2 AND status = 'waiting'`,
-        [runId, appId]
-      )
-
-      // Dead-letter queued messages for this run
-      await client.query(
-        `UPDATE workflow_queue_messages SET status = 'dead'
-         WHERE run_id = $1 AND application_id = $2 AND status IN ('pending', 'deferred', 'failed')`,
-        [runId, appId]
-      )
-
-      // Create cancel event
-      await client.query(
-        `INSERT INTO workflow_events (run_id, application_id, event_type)
-         VALUES ($1, $2, 'run_cancelled')`,
-        [runId, appId]
-      )
+      const result = await cancelWorkflowRun(client, appId, runId)
+      if (!result.run) throw new RunNotFound(runId)
+      if (!result.cancelled) throw new BadRequest(`run is already in terminal state: ${result.run.status}`)
 
       await client.query('COMMIT')
-      return formatRun(result.rows[0])
+      return formatRun(result.run)
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
