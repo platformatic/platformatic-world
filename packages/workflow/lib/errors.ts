@@ -11,5 +11,18 @@ export const VersionExpired = createError('WF_VERSION_EXPIRED', 'Deployment vers
 export const Unauthorized = createError('WF_UNAUTHORIZED', 'Unauthorized: %s', 401)
 export const Forbidden = createError('WF_FORBIDDEN', 'Forbidden: %s', 403)
 export const AppNotFound = createError('WF_APP_NOT_FOUND', 'Application %s not found', 404)
+export const AppBindingConflict = createError('WF_APP_BINDING_CONFLICT', '%s', 409)
 export const StreamNotFound = createError('WF_STREAM_NOT_FOUND', 'Stream %s not found', 404)
 export const BadRequest = createError('WF_BAD_REQUEST', '%s', 400)
+
+export class RemoteOperationError extends Error {
+  statusCode: number
+  code: string
+
+  constructor (code: string, message: string, statusCode: number) {
+    super(message)
+    this.name = 'RemoteOperationError'
+    this.code = code
+    this.statusCode = statusCode
+  }
+}

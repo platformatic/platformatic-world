@@ -1,24 +1,45 @@
 import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
-import { AppNotFound, Forbidden, BadRequest } from '../lib/errors.ts'
+import { AppNotFound, AppBindingConflict, Forbidden, BadRequest } from '../lib/errors.ts'
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 async function appsPlugin (app: FastifyInstance): Promise<void> {
   // Create application
   app.post('/api/v1/apps', async (request, reply) => {
     if (!request.isAdmin) throw new Forbidden('admin access required')
 
-    const { appId } = request.body as { appId: string }
+    const { appId, iccApplicationId } = request.body as { appId: string, iccApplicationId?: string }
     if (!appId) throw new BadRequest('appId is required')
+    if (iccApplicationId !== undefined && !UUID_PATTERN.test(iccApplicationId)) {
+      throw new BadRequest('iccApplicationId must be a UUID')
+    }
 
-    const result = await app.pg.query(
-      `INSERT INTO workflow_applications (app_id) VALUES ($1)
-       ON CONFLICT (app_id) DO NOTHING
-       RETURNING app_id`,
-      [appId]
-    )
+    let result
+    try {
+      result = await app.pg.query(
+        `INSERT INTO workflow_applications (app_id, icc_application_id) VALUES ($1, $2::uuid)
+         ON CONFLICT (app_id) DO UPDATE
+           SET icc_application_id = COALESCE(workflow_applications.icc_application_id,
+                                             EXCLUDED.icc_application_id)
+           WHERE workflow_applications.icc_application_id IS NULL
+              OR EXCLUDED.icc_application_id IS NULL
+              OR workflow_applications.icc_application_id = EXCLUDED.icc_application_id
+         RETURNING app_id, icc_application_id, (xmax = 0) AS created`,
+        [appId, iccApplicationId || null]
+      )
+    } catch (error: any) {
+      if (error.code === '23505') {
+        throw new AppBindingConflict('ICC application ID is already bound to another World application')
+      }
+      throw error
+    }
+    if (result.rows.length === 0) {
+      throw new AppBindingConflict('World application is already bound to a different ICC application ID')
+    }
 
-    reply.code(result.rows.length > 0 ? 201 : 200)
-    return { appId }
+    reply.code(result.rows[0].created ? 201 : 200)
+    return { appId, iccApplicationId: result.rows[0].icc_application_id || undefined }
   })
 
   // Create K8s binding

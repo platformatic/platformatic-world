@@ -10,8 +10,16 @@ import { createQueue } from './lib/queue.ts'
 import type { QueueConfig } from './lib/queue.ts'
 import { createStreamer } from './lib/streamer.ts'
 import { createEncryption } from './lib/encryption.ts'
+import { createRemoteOperations } from './lib/remote-operations.ts'
+import type { RemoteOperations } from './lib/remote-operations.ts'
+import { createRemoteHandlerRuns } from './lib/remote-handler-runs.ts'
+import type { RemoteHandlerRuns } from './lib/remote-handler-runs.ts'
 
 export interface PlatformaticWorldConfig extends ClientConfig, QueueConfig {}
+export type PlatformaticWorld = World & {
+  remoteOperations: RemoteOperations
+  remoteHandlerRuns: RemoteHandlerRuns
+}
 
 // Spec 6 requires slot-numbered event ids, provided by migration 009.
 const SPEC_VERSION_SUPPORTS_SLOT_IDENTITY = 6
@@ -63,7 +71,7 @@ function mintedSpecVersion (env: NodeJS.ProcessEnv = process.env): number {
     : SPEC_VERSION_SUPPORTS_SLOT_IDENTITY
 }
 
-export function createPlatformaticWorld (config: PlatformaticWorldConfig): World {
+export function createPlatformaticWorld (config: PlatformaticWorldConfig): PlatformaticWorld {
   const client = new HttpClient(config)
 
   return {
@@ -71,6 +79,8 @@ export function createPlatformaticWorld (config: PlatformaticWorldConfig): World
     ...createStorage(client),
     ...createQueue(client, config),
     ...createStreamer(client),
+    remoteOperations: createRemoteOperations(client),
+    remoteHandlerRuns: createRemoteHandlerRuns(client),
     getEncryptionKeyForRun: createEncryption(client),
     async start () {
       // In K8s, ICC registers queue handlers with proper FQDN URLs
@@ -130,7 +140,7 @@ function readAppName (): string {
   }
 }
 
-export function createWorld (options?: Partial<CreateWorldOptions>): World {
+export function createWorld (options?: Partial<CreateWorldOptions>): PlatformaticWorld {
   const serviceUrl = options?.serviceUrl || process.env.PLT_WORLD_SERVICE_URL
   if (!serviceUrl) {
     throw new Error('PLT_WORLD_SERVICE_URL environment variable is required')
@@ -187,3 +197,38 @@ export function createWorld (options?: Partial<CreateWorldOptions>): World {
 export { HttpClient } from './lib/client.ts'
 export type { ClientConfig } from './lib/client.ts'
 export type { QueueConfig } from './lib/queue.ts'
+export {
+  REMOTE_ENDPOINT_REGISTRY_PROVIDER,
+  createStaticRemoteEndpointRegistry,
+  setRemoteEndpointRegistryProvider,
+} from './lib/remote-operations.ts'
+export type {
+  RemoteEndpointRegistry,
+  RemoteEndpointRegistryProvider,
+  RemoteEndpointSchemas,
+  RemoteJsonSchema,
+  RemoteOperationUpdate,
+  ActiveRemoteOperation,
+  ActiveRemoteOperationsPage,
+  ListActiveRemoteOperationsOptions,
+  RemoteOperations,
+  ResolvedRemoteEndpoint,
+  StaticRemoteEndpointRegistryConfig,
+  StageRemoteOperation,
+} from './lib/remote-operations.ts'
+export {
+  REMOTE_HANDLER_DEADLINE_ATTRIBUTE,
+  createRemoteHandlerStartOptions,
+} from './lib/remote-handler-runs.ts'
+export type {
+  ActiveRemoteHandlerRun,
+  ActiveRemoteHandlerRunsPage,
+  CancelRemoteHandlerRun,
+  CancelRemoteHandlerRunResult,
+  ListActiveRemoteHandlerRunsOptions,
+  PreparedRemoteHandlerStart,
+  RemoteHandlerRuns,
+  RemoteHandlerRunReservation,
+  RemoteHandlerStartOptions,
+  ReserveRemoteHandlerRun,
+} from './lib/remote-handler-runs.ts'

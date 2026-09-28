@@ -8,11 +8,12 @@
   "scripts": {
     "build": "pnpm -C packages/world build",
     "pretest": "pnpm run build",
-    "test": "pnpm --filter '@platformatic/world' --filter '@platformatic/workflow' --filter '@platformatic/workflow-fastify' test",
+    "test": "pnpm --filter '@platformatic/world' --filter '@platformatic/workflow' --filter '@platformatic/workflow-fastify' --filter '@platformatic/remote-workflow' test",
     "lint": "eslint",
     "test:e2e:v5": "pnpm -C e2e-v5 test",
     "test:e2e:v4": "pnpm -C e2e-v4 test",
-    "test:e2e:vercel": "pnpm -C e2e-v5 test:vercel"
+    "test:e2e:vercel": "pnpm -C e2e-v5 test:vercel",
+    "test:remote-steps-probes": "node --test remote-steps/probes/rmt1-transform.test.ts && pnpm -C e2e-v5 test:remote-steps-probes"
   },
   "devDependencies": {
     "eslint": "^9.39.3",

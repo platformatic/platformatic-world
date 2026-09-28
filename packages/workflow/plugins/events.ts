@@ -1,13 +1,14 @@
 import fp from 'fastify-plugin'
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
-import { RunNotFound, BadRequest } from '../lib/errors.ts'
+import { RunNotFound, BadRequest, RemoteOperationError } from '../lib/errors.ts'
 import { checkRunQuota, checkEventQuota } from '../lib/quotas.ts'
 import type pg from 'pg'
 
 const ATTRIBUTE_KEY_MAX_LENGTH = 256
 const ATTRIBUTE_VALUE_MAX_BYTES = 256
 const ATTRIBUTE_MAX_PER_RUN = 64
+const ACTIVE_RUN_STATUSES = new Set(['pending', 'running'])
 
 // Slot-based event identity (spec version 6). An event id is `evnt_` followed
 // by the event's dense, 1-based position in its run's log, zero-padded to 26
@@ -341,6 +342,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
       error: statusCode >= 500 ? 'Internal Server Error' : error.message,
       message: error.message,
     }
+    if (error instanceof RemoteOperationError) response.code = error.code
     if (error.meta) response.meta = error.meta
     reply.code(statusCode).send(response)
   })
@@ -435,9 +437,17 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           // here.
 
           const existingRun = await client.query(
-            'SELECT id FROM workflow_runs WHERE id = $1 AND application_id = $2',
+            'SELECT * FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
             [rawRunId, appId]
           )
+
+          // Cancellation and all other terminal transitions are monotonic.
+          // A delayed start retry must not resurrect a run after a concurrent
+          // cancellation won the row lock.
+          if (existingRun.rows.length > 0 && !ACTIVE_RUN_STATUSES.has(existingRun.rows[0].status)) {
+            result = { event: null, run: formatRun(existingRun.rows[0], resolveData) }
+            break
+          }
 
           if (existingRun.rows.length === 0) {
             // Resilient start: create the run from the run_started eventData.
@@ -531,15 +541,14 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'run_completed': {
-          // Skip duplicate completions
           const runCheck = await client.query(
-            'SELECT status FROM workflow_runs WHERE id = $1 AND application_id = $2',
+            'SELECT * FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
             [rawRunId, appId]
           )
-          if (runCheck.rows.length > 0 && runCheck.rows[0].status === 'completed') {
-            await client.query('COMMIT')
-            const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
-            return { event: null, run: formatRun(runRow, resolveData) }
+          if (runCheck.rows.length === 0) throw new RunNotFound(rawRunId)
+          if (!ACTIVE_RUN_STATUSES.has(runCheck.rows[0].status)) {
+            result = { event: null, run: formatRun(runCheck.rows[0], resolveData) }
+            break
           }
           const output = body.eventData?.output ? encodeData(body.eventData.output) : null
           await client.query(
@@ -564,15 +573,14 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'run_failed': {
-          // Skip duplicate failures
           const runFailCheck = await client.query(
-            'SELECT status FROM workflow_runs WHERE id = $1 AND application_id = $2',
+            'SELECT * FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
             [rawRunId, appId]
           )
-          if (runFailCheck.rows.length > 0 && (runFailCheck.rows[0].status === 'failed' || runFailCheck.rows[0].status === 'completed')) {
-            await client.query('COMMIT')
-            const runRow = (await client.query('SELECT * FROM workflow_runs WHERE id = $1', [rawRunId])).rows[0]
-            return { event: null, run: formatRun(runRow, resolveData) }
+          if (runFailCheck.rows.length === 0) throw new RunNotFound(rawRunId)
+          if (!ACTIVE_RUN_STATUSES.has(runFailCheck.rows[0].status)) {
+            result = { event: null, run: formatRun(runFailCheck.rows[0], resolveData) }
+            break
           }
           const error = body.eventData?.error != null ? encodeData(body.eventData.error) : null
           await client.query(
@@ -596,6 +604,15 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'run_cancelled': {
+          const runCancelCheck = await client.query(
+            'SELECT * FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
+            [rawRunId, appId]
+          )
+          if (runCancelCheck.rows.length === 0) throw new RunNotFound(rawRunId)
+          if (!ACTIVE_RUN_STATUSES.has(runCancelCheck.rows[0].status)) {
+            result = { event: null, run: formatRun(runCancelCheck.rows[0], resolveData) }
+            break
+          }
           await client.query(
             `UPDATE workflow_runs SET status = 'cancelled', completed_at = NOW(), updated_at = NOW()
              WHERE id = $1 AND application_id = $2`,
@@ -617,6 +634,15 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
         }
 
         case 'run_expired': {
+          const runExpireCheck = await client.query(
+            'SELECT * FROM workflow_runs WHERE id = $1 AND application_id = $2 FOR UPDATE',
+            [rawRunId, appId]
+          )
+          if (runExpireCheck.rows.length === 0) throw new RunNotFound(rawRunId)
+          if (!ACTIVE_RUN_STATUSES.has(runExpireCheck.rows[0].status)) {
+            result = { event: null, run: formatRun(runExpireCheck.rows[0], resolveData) }
+            break
+          }
           await client.query(
             `UPDATE workflow_runs SET status = 'expired', expired_at = NOW(), completed_at = NOW(), updated_at = NOW()
              WHERE id = $1 AND application_id = $2`,
@@ -786,7 +812,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           // both INSERT a step_completed event — the SDK rejects the second
           // as an unconsumed duplicate on replay (CorruptedEventLogError).
           const stepResult = await client.query(
-            'SELECT id, status FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
+            'SELECT id, status, step_name FROM workflow_steps WHERE run_id = $1 AND correlation_id = $2 AND application_id = $3 FOR UPDATE',
             [rawRunId, body.correlationId, appId]
           )
           // Skip duplicate completions — the SDK may retry after a transient
@@ -801,6 +827,19 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
               `UPDATE workflow_steps SET status = 'completed', output = $3, completed_at = NOW(), updated_at = NOW()
                WHERE id = $1 AND application_id = $2`,
               [stepResult.rows[0].id, appId, resultData]
+            )
+
+            // A remote dispatch stages its operation before returning. Make
+            // that row externally dispatchable only when the corresponding
+            // step completion is durably recorded. Both writes share this
+            // transaction, so either the step result and operation promotion
+            // commit together or neither does.
+            await client.query(
+              `UPDATE workflow_remote_operations
+               SET status = 'pending', scheduled_at = NOW(), updated_at = NOW()
+               WHERE application_id = $1 AND caller_run_id = $2 AND ordinal = $3
+                 AND dispatch_step_id = $4 AND status = 'staged'`,
+              [appId, rawRunId, body.correlationId, stepResult.rows[0].step_name]
             )
           }
           const eventRow = await insertEvent(client, rawRunId, appId, body)
@@ -871,7 +910,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           const insertResult = await client.query(
             `INSERT INTO workflow_hooks (id, run_id, application_id, correlation_id, token, owner_id, project_id, environment, metadata, spec_version, is_webhook)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-             ON CONFLICT (token) WHERE status = 'pending' DO NOTHING
+             ON CONFLICT (application_id, token) WHERE status = 'pending' DO NOTHING
              RETURNING id`,
             [hookId, rawRunId, appId, body.correlationId, eventData.token,
               eventData.ownerId || '', eventData.projectId || '', eventData.environment || '',
@@ -881,8 +920,10 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
           if (insertResult.rows.length === 0) {
             // Check if the existing hook belongs to this same run (retry/re-invocation)
             const existingHook = await client.query(
-              'SELECT id FROM workflow_hooks WHERE token = $1 AND run_id = $2 AND correlation_id = $3 AND status = \'pending\'',
-              [eventData.token, rawRunId, body.correlationId]
+              `SELECT id FROM workflow_hooks
+               WHERE token = $1 AND run_id = $2 AND correlation_id = $3
+                 AND application_id = $4 AND status = 'pending'`,
+              [eventData.token, rawRunId, body.correlationId, appId]
             )
             if (existingHook.rows.length > 0) {
               // Same run, same correlation — this is a retry, return the existing hook

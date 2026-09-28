@@ -1,0 +1,67 @@
+{
+  "name": "@platformatic/remote-workflow",
+  "version": "0.1.0",
+  "description": "Durable remote steps for Workflow SDK and Platformatic World",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./wire": {
+      "types": "./dist/wire.d.ts",
+      "default": "./dist/wire.js"
+    },
+    "./build": {
+      "types": "./dist/build.d.ts",
+      "default": "./dist/build.js"
+    },
+    "./handler": {
+      "types": "./dist/handler.d.ts",
+      "default": "./dist/handler.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    }
+  },
+  "bin": {
+    "platformatic-remote-workflow": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.types.json",
+    "lint": "eslint"
+  },
+  "peerDependencies": {
+    "workflow": ">=5.0.0-beta.46 <6"
+  },
+  "dependencies": {
+    "@platformatic/world": "workspace:*",
+    "ajv": "^8.20.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "workflow": "5.0.0-beta.46"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/platformatic/platformatic-world.git",
+    "directory": "packages/remote-workflow"
+  },
+  "license": "Apache-2.0"
+}

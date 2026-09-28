@@ -15,6 +15,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "npm run build",
+    "pretest": "pnpm run build",
     "test": "node --test test/*.test.ts",
     "lint": "eslint"
   },

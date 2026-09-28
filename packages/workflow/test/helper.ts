@@ -6,17 +6,15 @@ import autoload from '@fastify/autoload'
 import type { FastifyInstance } from 'fastify'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const BASE_CONNECTION_STRING = process.env.DATABASE_URL || 'postgresql://wf:wf@localhost:5434/workflow'
+const DEFAULT_CONNECTION_STRING = 'postgresql://wf:wf@localhost:5434/workflow'
 
 export interface TestContext {
   app: FastifyInstance
   appId: string
 }
 
-export async function setupTest (): Promise<TestContext> {
-  const appIdStr = `test-app-${randomBytes(4).toString('hex')}`
-
-  process.env.DATABASE_URL = BASE_CONNECTION_STRING
+export async function setupTest (appIdStr = `test-app-${randomBytes(4).toString('hex')}`): Promise<TestContext> {
+  process.env.DATABASE_URL = process.env.DATABASE_URL || DEFAULT_CONNECTION_STRING
   process.env.PLT_WORLD_APP_ID = appIdStr
   process.env.WF_ENABLE_POLLER = 'false'
 
@@ -39,6 +37,8 @@ export async function teardownTest (ctx: TestContext): Promise<void> {
   if (appResult.rows.length > 0) {
     const applicationId = appResult.rows[0].id
 
+    await ctx.app.pg.query('DELETE FROM workflow_remote_handler_runs WHERE application_id = $1', [applicationId])
+    await ctx.app.pg.query('DELETE FROM workflow_remote_operations WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_stream_chunks WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_waits WHERE application_id = $1', [applicationId])
     await ctx.app.pg.query('DELETE FROM workflow_hooks WHERE application_id = $1', [applicationId])

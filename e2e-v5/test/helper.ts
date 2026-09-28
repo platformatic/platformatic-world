@@ -190,6 +190,25 @@ export async function registerHandlers (): Promise<void> {
   }
 }
 
+export function startNextApp (): SpawnedProcess {
+  return startProcess('pnpm', ['exec', 'next', 'start', '-p', String(NEXT_PORT)], {
+    WORKFLOW_TARGET_WORLD: '@platformatic/world',
+    PLT_WORLD_SERVICE_URL: WF_URL,
+    PLT_WORLD_APP_ID: 'default',
+    PLT_WORLD_DEPLOYMENT_VERSION: DEPLOYMENT_VERSION,
+  }, ROOT)
+}
+
+export async function restartNextApp (nextApp: SpawnedProcess): Promise<SpawnedProcess> {
+  nextApp.kill()
+  await waitForPortFree(NEXT_PORT)
+
+  const restarted = startNextApp()
+  await waitForReady(NEXT_URL)
+  await registerHandlers()
+  return restarted
+}
+
 export function killPort (port: number) {
   try {
     if (process.platform === 'darwin') {
@@ -242,7 +261,7 @@ export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: Sp
 
   // watt-test.json disables runtime.metrics — otherwise wattpm tries to
   // bind 9090 and FATALs when another process on the dev machine holds it.
-  const wfService = startProcess('npx', ['wattpm', 'start', '-c', 'watt-test.json'], {
+  const wfService = startProcess('pnpm', ['exec', 'wattpm', 'start', '-c', 'watt-test.json'], {
     DATABASE_URL: DB_URL,
     PORT: String(WF_PORT),
   }, WORKFLOW_ROOT)
@@ -255,12 +274,7 @@ export async function setup (): Promise<{ wfService: SpawnedProcess, nextApp: Sp
   await client.query('TRUNCATE workflow_events, workflow_hooks, workflow_queue_messages, workflow_steps, workflow_waits, workflow_stream_chunks, workflow_runs, workflow_queue_handlers CASCADE')
   await client.end()
 
-  const nextApp = startProcess('npx', ['next', 'start', '-p', String(NEXT_PORT)], {
-    WORKFLOW_TARGET_WORLD: '@platformatic/world',
-    PLT_WORLD_SERVICE_URL: WF_URL,
-    PLT_WORLD_APP_ID: 'default',
-    PLT_WORLD_DEPLOYMENT_VERSION: DEPLOYMENT_VERSION,
-  }, ROOT)
+  const nextApp = startNextApp()
 
   await waitForReady(NEXT_URL)
 

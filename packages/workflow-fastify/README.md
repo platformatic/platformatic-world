@@ -86,6 +86,51 @@ npx workflow build --target standalone
 |---|---|---|
 | `buildDir` | `process.cwd()` | Directory containing `.well-known/workflow/v1` |
 | `register` | `true` | Register the queue handler on boot (no-op under [ICC](https://github.com/platformatic/intelligent-command-center), Platformatic's control plane) |
+| `push` | — | Inject the authenticated remote-handler push adapter described below |
+
+## Remote-handler push adapter
+
+An application that accepts ICC push delivery can pass `push` when registering
+the plugin. The application remains responsible for resolving its ICC app UUID,
+Watt application ID, deployment version, shared secret, private
+`remote-handlers.json` artifact, Workflow runtime operations, and shared replay
+store. The package does not create another listener or read deployment-specific
+environment variables for the push adapter.
+
+```ts
+import workflowFastify, {
+  createValkeyRemoteHandlerPushReplayStore,
+} from '@platformatic/workflow-fastify'
+
+await app.register(workflowFastify, {
+  push: {
+    identity: {
+      tenant: iccApplicationUuid,
+      service: wattApplicationId,
+      versionLabel: resolvedDeploymentVersion,
+    },
+    manifest: privateRemoteHandlersManifest,
+    secret: pushSharedSecret,
+    replayStore: createValkeyRemoteHandlerPushReplayStore({ client: valkey }),
+    runtime: remoteHandlerRuntimeAdapter,
+  },
+})
+```
+
+This mounts `POST /remote/v1/dispatch`,
+`GET /remote/v1/operations/:handlerRunId`, and `POST /remote/v1/cancel` on the
+same Fastify server. Requests use an inline-only JSON v1 payload with a 256 KiB
+ceiling. They must include `x-pltf-timestamp`, `x-pltf-nonce`, and a lowercase
+hex `x-pltf-signature`, computed with a secret of at least 32 bytes over:
+
+```text
+v1\n<unix-seconds>\n<nonce>\n<METHOD>\n<pathname>\n<SHA256(raw-body)>
+```
+
+The method is uppercase, the pathname excludes its query, and both digests use
+lowercase hex. Replay claims must be atomic and shared across all
+instances; the Valkey helper issues one `SET key value PX ttl NX` operation and
+has no in-memory fallback.
 
 ## Environment
 
