@@ -179,8 +179,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/world
       '@workflow/world':
-        specifier: 4.5.0
-        version: 4.5.0
+        specifier: 5.0.1
+        version: 5.0.1
       next:
         specifier: ^16.0.0
         version: 16.3.6(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -213,8 +213,8 @@ importers:
         specifier: workspace:*
         version: link:../packages/world
       '@workflow/world':
-        specifier: 5.0.0-beta.39
-        version: 5.0.0-beta.39
+        specifier: 5.0.1
+        version: 5.0.1
       next:
         specifier: ^16.0.0
         version: 16.3.6(@opentelemetry/api@1.9.1)(@types/node@24.19.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -331,8 +331,8 @@ importers:
         specifier: ^24.0.0
         version: 24.19.0
       '@workflow/world':
-        specifier: 4.5.0
-        version: 4.5.0
+        specifier: 5.0.1
+        version: 5.0.1
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -1960,6 +1960,9 @@ packages:
 
   '@workflow/world@5.0.0-beta.39':
     resolution: {integrity: sha512-pOL6+GXZKjO49UhCZrjfooeCDQAPdTWezQPJtH+jJQxrVXHjuSgPBfftuv8VxKbO9JLRnjUw0o3AFSNNAo4Ygw==}
+
+  '@workflow/world@5.0.1':
+    resolution: {integrity: sha512-rO95deJNAId4DBS6/RylBthTYeKUR0SGUOJ7fg5ZCz4jMngI6xAbLTueXXFOS3dp8bDh+aYWgwSIKwuEKfjagQ==}
 
   '@xhmikosr/archive-type@8.1.0':
     resolution: {integrity: sha512-EXOjEbnZFE5c/nFMf4FOrEURVanzHpnkPYmnmr78u02/8hAhE0FMq8p9TK1IM0/bFr5VcyBUY0gfLm8f7dKy+Q==}
@@ -7033,6 +7036,11 @@ snapshots:
       zod: 4.3.6
 
   '@workflow/world@5.0.0-beta.39':
+    dependencies:
+      ulid: 3.0.2
+      zod: 4.5.4
+
+  '@workflow/world@5.0.1':
     dependencies:
       ulid: 3.0.2
       zod: 4.5.4
