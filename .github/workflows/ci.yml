@@ -40,8 +40,17 @@ jobs:
       - name: Typecheck workflow-fastify
         run: pnpm --filter '@platformatic/workflow-fastify' build
 
+  # The suite runs on every Node line we support: 22 and 24 are the ones the
+  # Workflow SDK itself targets, 26 is the current release.
   test:
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+
+    name: test (node ${{ matrix.node }})
 
     services:
       postgres:
@@ -63,7 +72,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
 
       - uses: pnpm/action-setup@v6
 
@@ -101,8 +110,8 @@ jobs:
         run: node --test packages/world/test/client.test.ts
 
   # Coverage runs on Node 26 only: the scripts use --test-coverage-include-all,
-  # which Node 24 rejects as a bad option. The `test` job keeps the suite itself
-  # honest on Node 24.
+  # which Node 22 and 24 reject as a bad option. The `test` matrix keeps the
+  # suite itself honest on those lines.
   coverage:
     runs-on: ubuntu-latest
 
@@ -161,7 +170,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
 
       - uses: pnpm/action-setup@v6
 
