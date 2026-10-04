@@ -71,58 +71,40 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
 
     const delaySeconds = envelope.delaySeconds || 0
 
+    // Through the store rather than a direct INSERT: it owns whether a message
+    // is publishable on commit or has to go through the outbox relay, and a
+    // second enqueue path here would silently bypass that for a remote
+    // transport. The HTTP concerns above (encoding, quota, dedupe, 410) stay
+    // here; only the write is the store's.
+    let messageId
+    try {
+      const enqueued = await app.queueStore.enqueue({
+        queueName: envelope.queueName,
+        applicationId: appId,
+        runId,
+        deploymentVersion,
+        payload: payloadJson,
+        payloadBytes,
+        payloadEncoding: encoding,
+        idempotencyKey: envelope.idempotencyKey || null,
+        delaySeconds,
+      })
+      messageId = enqueued.messageId
+    } catch (err: any) {
+      if (err.code === '23505') throw new DuplicateIdempotencyKey(envelope.idempotencyKey || '')
+      throw err
+    }
+
+    reply.code(201)
     if (delaySeconds > 0) {
-      let result
-      try {
-        result = await app.pg.query(
-          `INSERT INTO workflow_queue_messages
-           (idempotency_key, queue_name, run_id, deployment_version, application_id,
-            payload, payload_bytes, payload_encoding, status, deliver_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'deferred', NOW() + make_interval(secs => $9))
-           RETURNING id`,
-          [envelope.idempotencyKey || null, envelope.queueName, runId, deploymentVersion, appId,
-            payloadJson, payloadBytes, encoding, delaySeconds]
-        )
-      } catch (err: any) {
-        if (err.code === '23505') throw new DuplicateIdempotencyKey(envelope.idempotencyKey || '')
-        throw err
-      }
-
-      const messageId = result.rows[0].id
-
-      await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
-
-      reply.code(201)
       return {
         messageId: `msg_${messageId}`,
         scheduled: true,
         deliverAt: new Date(Date.now() + delaySeconds * 1000).toISOString(),
       }
     }
-
-    let insertResult
-    try {
-      insertResult = await app.pg.query(
-        `INSERT INTO workflow_queue_messages
-         (idempotency_key, queue_name, run_id, deployment_version, application_id,
-          payload, payload_bytes, payload_encoding, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
-         RETURNING id`,
-        [envelope.idempotencyKey || null, envelope.queueName, runId, deploymentVersion, appId,
-          payloadJson, payloadBytes, encoding]
-      )
-    } catch (err: any) {
-      if (err.code === '23505') throw new DuplicateIdempotencyKey(envelope.idempotencyKey || '')
-      throw err
-    }
-
-    const messageId = insertResult.rows[0].id
-
-    await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
-
-    reply.code(201)
     return { messageId: `msg_${messageId}` }
   })
 }
 
-export default fp(queuePlugin, { name: 'queue', dependencies: ['auth', 'cbor'] })
+export default fp(queuePlugin, { name: 'queue', dependencies: ['auth', 'cbor', 'poller'] })

@@ -65,7 +65,11 @@ async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
       const result = await client.query(
         `UPDATE workflow_queue_messages
          SET status = 'pending', attempts = 0, next_retry_at = NULL,
-             dead_at = NULL, updated_at = NOW()
+             dead_at = NULL, updated_at = NOW(),
+             -- Back into the outbox. The broker copy of this message was acked
+             -- when it died, so a row that still looks published would never be
+             -- handed to the transport again.
+             published_at = NULL, published_to = NULL
          WHERE id = $1 AND application_id = $2 AND status = 'dead'
            AND failure_finalized_at IS NULL
          RETURNING id`,
