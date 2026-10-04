@@ -23,6 +23,17 @@
         "digest"
       ],
       "automerge": true
+    },
+    {
+      "description": "e2e-v4 exercises the v4 SDK deliberately. v5 is now npm 'latest' and v4 lives on the 'previous' tag, so hold this app on the v4 line; without this renovate proposes a major bump that breaks the compat suite.",
+      "matchFileNames": [
+        "e2e-v4/package.json"
+      ],
+      "matchPackageNames": [
+        "workflow",
+        "@workflow/world"
+      ],
+      "allowedVersions": "<5.0.0"
     }
   ],
   "lockFileMaintenance": {

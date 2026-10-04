@@ -13,28 +13,20 @@ import { createEncryption } from './lib/encryption.ts'
 
 export interface PlatformaticWorldConfig extends ClientConfig, QueueConfig {}
 
-// Spec 6 requires slot-numbered event ids, provided by migration 009.
+// Slot-numbered event ids, provided by migration 009.
 const SPEC_VERSION_SUPPORTS_SLOT_IDENTITY = 6
-// Spec 7 is the sealed log. Atomic slot allocation keeps our log dense, so it
-// needs no noop writer; the read path still passes through backend-created
-// noop events.
-// Spec 8 is a READER contract: a run stamped here is executed by a runtime that
-// understands an involuntary `hook_disposed{forceClaimedBy}` and rejects the
-// hook's awaiters with HookForceClaimedError instead of stranding them. It says
-// nothing about whether THIS World can perform a takeover -- that is the
-// separate `hookForceClaim` capability, which we do not declare, so the runtime
-// rejects `createHook({ experimental_force: true })` against us outright
-// (@workflow/core workflow/hook.js gates on the capability alone, never on the
-// spec version). Stamping 8 therefore advertises nothing we do not implement.
+// Reader contract: the run's runtime understands an involuntary
+// `hook_disposed{forceClaimedBy}`. It does not claim we can perform a takeover
+// -- that is the `hookForceClaim` capability, which we leave unset.
 const SPEC_VERSION_SUPPORTS_HOOK_FORCE_CLAIM = 8
 
-// Track the SDK's SPEC_VERSION_CURRENT, not the newest named feature: the two
-// coincided at spec 7, so pinning the feature constant silently stopped
-// tracking current when beta.39 minted 8, and only the e2e equality assertion
-// against SPEC_VERSION_CURRENT caught it.
+// Must track the SDK's SPEC_VERSION_CURRENT. Naming a feature constant instead
+// silently stopped tracking it when spec 8 landed.
 const SPEC_VERSION_CURRENT = SPEC_VERSION_SUPPORTS_HOOK_FORCE_CLAIM
 
-// Reimplemented because the type-only @workflow/world dependency is pinned to v4.
+// Not imported: @workflow/world is a peer dependency supplied by the host app,
+// which may be v4 (e2e-v4 is). v4 has no mintedSpecVersion and its
+// SPEC_VERSION_CURRENT is 3.
 const warnedEnvValues = new Set<string>()
 
 // Match the SDK flag semantics, including one warning per invalid value.
@@ -52,11 +44,8 @@ function envFlag (name: string, fallback: boolean, env: NodeJS.ProcessEnv): bool
   return fallback
 }
 
-// Mirrors the SDK's own mintedSpecVersion(): current when the sealed log is on,
-// otherwise all the way back to slot identity. The kill switch floors at 6
-// rather than 7 because assertWorldSupportsRuntimeProtocol admits a World from
-// the slot-identity version up, so switching the sealed log off must not leave
-// a World the runtime then refuses.
+// Mirrors the SDK's mintedSpecVersion(). The kill switch floors at slot
+// identity, the lowest version the runtime still admits.
 function mintedSpecVersion (env: NodeJS.ProcessEnv = process.env): number {
   return envFlag('WORKFLOW_SEALED_LOG', true, env)
     ? SPEC_VERSION_CURRENT
