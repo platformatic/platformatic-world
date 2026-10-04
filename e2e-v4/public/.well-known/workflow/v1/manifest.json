@@ -1,25 +1,14 @@
 {
   "version": "1.0.0",
   "steps": {
-    "node_modules/.pnpm/workflow@4.8.9_@nestjs+common@12.0.3_reflect-metadata@0.2.2_rxjs@7.8.2_supports-color@8_70cce0ebfdb5c1b11180eca97d84d382/node_modules/workflow/dist/stdlib.js": {
-      "fetch": {
-        "stepId": "step//workflow@4.8.9//fetch"
-      }
-    },
     "workflows/simple.ts": {
       "add": {
         "stepId": "step//./workflows/simple//add"
       }
     },
-    "node_modules/.pnpm/workflow@4.8.9_@nestjs+common@12.0.3_reflect-metadata@0.2.2_rxjs@7.8.2_supports-color@8_70cce0ebfdb5c1b11180eca97d84d382/node_modules/workflow/dist/internal/builtins.js": {
-      "__builtin_response_array_buffer": {
-        "stepId": "__builtin_response_array_buffer"
-      },
-      "__builtin_response_json": {
-        "stepId": "__builtin_response_json"
-      },
-      "__builtin_response_text": {
-        "stepId": "__builtin_response_text"
+    "node_modules/.pnpm/workflow@4.8.12_@nestjs+common@12.1.0_reflect-metadata@0.2.2_rxjs@7.8.2_supports-color@_4772a81426eaced6beb11994366c3317/node_modules/workflow/dist/stdlib.js": {
+      "fetch": {
+        "stepId": "step//workflow@4.8.12//fetch"
       }
     },
     "workflows/compat.ts": {
@@ -34,6 +23,17 @@
       },
       "writeTextToStream": {
         "stepId": "step//./workflows/compat//writeTextToStream"
+      }
+    },
+    "node_modules/.pnpm/workflow@4.8.12_@nestjs+common@12.1.0_reflect-metadata@0.2.2_rxjs@7.8.2_supports-color@_4772a81426eaced6beb11994366c3317/node_modules/workflow/dist/internal/builtins.js": {
+      "__builtin_response_array_buffer": {
+        "stepId": "__builtin_response_array_buffer"
+      },
+      "__builtin_response_json": {
+        "stepId": "__builtin_response_json"
+      },
+      "__builtin_response_text": {
+        "stepId": "__builtin_response_text"
       }
     }
   },

@@ -431,12 +431,12 @@ pnpm test
 
 The repo ships **two Next.js workbenches** that exercise the full stack --
 real Next.js app, real Workflow SDK, real `@platformatic/world` adapter,
-real Workflow Service over HTTP -- pinned to different SDK versions:
+real Workflow Service over HTTP -- constrained to different major SDK lines:
 
 | Workbench | SDK version | Purpose |
 |---|---|---|
-| [`e2e-v5/`](e2e-v5/) | `workflow@5.0.0-beta.12` | Mirrors Vercel's main-branch CI. Hosts our Vercel-compat suite (61 ports of upstream tests) and the CBOR-specific assertions. |
-| [`e2e-v4/`](e2e-v4/) | `workflow@4.5.0` (stable) | Guards the v4 runtime path so stable-SDK users keep working. |
+| [`e2e-v5/`](e2e-v5/) | `workflow@5.x` (npm `latest`) | The current SDK line. Hosts our Vercel-compat suite (61 ports of upstream tests) and the CBOR-specific assertions. |
+| [`e2e-v4/`](e2e-v4/) | `workflow@4.x` (npm `previous`) | Guards the v4 runtime path so users still on v4 keep working. |
 
 Both workbenches share the same workflow sources and helper, only the
 `workflow` / `@workflow/*` versions in `package.json` differ.
