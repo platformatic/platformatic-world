@@ -75,8 +75,8 @@ jobs:
       - name: Build world package
         run: pnpm -C packages/world build
 
-      - name: Run tests
-        run: pnpm test
+      - name: Run tests with coverage
+        run: pnpm coverage
 
       - name: Build workflow service
         run: pnpm --filter @platformatic/workflow run build
