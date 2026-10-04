@@ -24,6 +24,7 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
     const newRunId = `wrun_${ulid()}`
 
     const client = await app.pg.connect()
+    let replayed
     try {
       await client.query('BEGIN')
 
@@ -68,13 +69,14 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
       await app.pg.query("SELECT pg_notify('deferred_messages', '{}')")
 
       const newRow = (await app.pg.query('SELECT * FROM workflow_runs WHERE id = $1', [newRunId])).rows[0]
-      return formatRun(newRow)
+      replayed = formatRun(newRow)
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
     } finally {
       client.release()
     }
+    return replayed
   })
 
   // Cancel an active run
@@ -83,6 +85,7 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
     const appId = request.appId
 
     const client = await app.pg.connect()
+    let cancelled
     try {
       await client.query('BEGIN')
 
@@ -129,13 +132,14 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
       )
 
       await client.query('COMMIT')
-      return formatRun(result.rows[0])
+      cancelled = formatRun(result.rows[0])
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
     } finally {
       client.release()
     }
+    return cancelled
   })
 
   // Wake up — cancel all pending sleeps (waits) for a run

@@ -51,6 +51,7 @@ async function drainingPlugin (app: FastifyInstance): Promise<void> {
     const appId = request.appId
 
     const client = await app.pg.connect()
+    let summary: { cancelledRuns: number, deadLetteredMessages: number }
     try {
       await client.query('BEGIN')
 
@@ -106,7 +107,7 @@ async function drainingPlugin (app: FastifyInstance): Promise<void> {
 
       await client.query('COMMIT')
 
-      return {
+      summary = {
         cancelledRuns: cancelledRuns.rows.length,
         deadLetteredMessages: deadLettered.rows.length,
       }
@@ -116,6 +117,7 @@ async function drainingPlugin (app: FastifyInstance): Promise<void> {
     } finally {
       client.release()
     }
+    return summary
   })
 }
 

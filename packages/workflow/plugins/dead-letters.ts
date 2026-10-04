@@ -78,13 +78,13 @@ async function deadLettersPlugin (app: FastifyInstance): Promise<void> {
 
       await client.query("SELECT pg_notify('deferred_messages', '{}')")
       await client.query('COMMIT')
-      return { retried: true, messageId: `msg_${numericId}` }
     } catch (err) {
       try { await client.query('ROLLBACK') } catch {}
       throw err
     } finally {
       client.release()
     }
+    return { retried: true, messageId: `msg_${numericId}` }
   })
 }
 

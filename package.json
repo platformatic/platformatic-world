@@ -7,6 +7,7 @@
   },
   "scripts": {
     "build": "pnpm -C packages/world build",
+    "coverage": "pnpm run build && pnpm --filter '@platformatic/world' --filter '@platformatic/workflow' --filter '@platformatic/workflow-fastify' coverage",
     "pretest": "pnpm run build",
     "test": "pnpm --filter '@platformatic/world' --filter '@platformatic/workflow' --filter '@platformatic/workflow-fastify' test",
     "lint": "eslint",

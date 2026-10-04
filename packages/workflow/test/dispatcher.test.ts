@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { decode, encode } from 'cbor-x'
+import { MockAgent, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
 import { dispatchMessage } from '../queue/dispatcher.ts'
 
 interface Received {
@@ -130,6 +131,108 @@ describe('dispatcher', () => {
       })
     } finally {
       await new Promise<void>((resolve) => errorServer.close(() => resolve()))
+    }
+  })
+})
+
+describe('dispatcher responses and failures', () => {
+  let server: ReturnType<typeof createServer>
+  let base = ''
+
+  function input (path: string) {
+    return {
+      url: `${base}${path}`,
+      queueName: '__wkf_workflow_test',
+      messageId: 7,
+      payload: { runId: 'r1' },
+      payloadBytes: null,
+      payloadEncoding: 'json' as const,
+      attempt: 0,
+    }
+  }
+
+  before(async () => {
+    server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      req.resume()
+      req.on('end', () => {
+        if (req.url === '/plain') {
+          res.writeHead(200, { 'content-type': 'text/plain' })
+          res.end('ok')
+        } else if (req.url === '/early') {
+          res.writeHead(425, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ meta: { retryAfter: new Date(Date.now() + 30_000).toISOString() } }))
+        } else if (req.url === '/early-no-meta') {
+          res.writeHead(425, { 'content-type': 'application/json' })
+          res.end('{}')
+        } else {
+          res.writeHead(425, { 'content-type': 'text/plain' })
+          res.end('too early')
+        }
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, resolve))
+    base = `http://localhost:${(server.address() as AddressInfo).port}`
+  })
+
+  after(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+
+  it('treats a 2xx without a JSON body as delivered', async () => {
+    assert.deepEqual(await dispatchMessage(input('/plain')), { success: true, statusCode: 200 })
+  })
+
+  it('turns a 425 into a deferred redelivery at retryAfter', async () => {
+    const withMeta = await dispatchMessage(input('/early'))
+    assert.equal(withMeta.success, true)
+    assert.equal(withMeta.statusCode, 425)
+    assert.ok(withMeta.timeoutSeconds! >= 29 && withMeta.timeoutSeconds! <= 30)
+
+    assert.deepEqual(await dispatchMessage(input('/early-no-meta')), { success: true, timeoutSeconds: 1, statusCode: 425 })
+    assert.deepEqual(await dispatchMessage(input('/early-not-json')), { success: true, timeoutSeconds: 1, statusCode: 425 })
+  })
+
+  it('reports a refused connection', async () => {
+    const closed = createServer()
+    await new Promise<void>((resolve) => closed.listen(0, resolve))
+    const { port } = closed.address() as AddressInfo
+    await new Promise<void>((resolve) => closed.close(() => resolve()))
+
+    const result = await dispatchMessage({ ...input(''), url: `http://127.0.0.1:${port}/flow` })
+    assert.deepEqual(result, {
+      success: false,
+      statusCode: 0,
+      error: { code: 'ECONNREFUSED', message: 'Target connection was refused' },
+    })
+  })
+
+  it('maps transport error codes to bounded messages', async () => {
+    const original = getGlobalDispatcher()
+    const agent = new MockAgent()
+    agent.disableNetConnect()
+    setGlobalDispatcher(agent)
+    const pool = agent.get('http://target.test')
+    const cases: [string | undefined, string, string][] = [
+      ['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'Target response headers timed out'],
+      ['UND_ERR_BODY_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'Target response body timed out'],
+      ['UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT', 'Target connection timed out'],
+      ['ECONNRESET', 'ECONNRESET', 'Target connection was reset'],
+      ['ENOTFOUND', 'ENOTFOUND', 'Target host was not found'],
+      ['err-weird.code', 'ERR_WEIRD_CODE', 'Target request failed'],
+      [undefined, 'DISPATCH_ERROR', 'Target request failed'],
+      ['', 'DISPATCH_ERROR', 'Target request failed'],
+    ]
+    try {
+      for (const [code, expectedCode, message] of cases) {
+        const error = new Error('transport failure')
+        if (code !== undefined) Object.assign(error, { code })
+        pool.intercept({ path: '/flow', method: 'POST' }).replyWithError(error)
+        const result = await dispatchMessage({ ...input(''), url: 'http://target.test/flow' })
+        assert.deepEqual(result, { success: false, statusCode: 0, error: { code: expectedCode, message } })
+      }
+    } finally {
+      setGlobalDispatcher(original)
+      await agent.close()
     }
   })
 })

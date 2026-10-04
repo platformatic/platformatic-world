@@ -56,3 +56,57 @@ export async function teardownTest (ctx: TestContext): Promise<void> {
 
   await ctx.app.close()
 }
+
+function sqlOf (query: any): string {
+  return typeof query === 'string' ? query : query?.text ?? ''
+}
+
+// Returning undefined lets the query through; returning anything else answers
+// it in place of the database; throwing makes it fail. `run` executes the real
+// query, for interceptors that need it to happen before they interfere.
+export type QueryInterceptor = (sql: string, params: any[] | undefined, run: () => Promise<any>) => unknown
+
+// Fault injection: route every query on the pool, and on clients checked out
+// of it, through `intercept`. Returns a function that restores the pool. Used
+// to drive ROLLBACK, error-logging and defensive read-back paths, which a
+// healthy database never reaches.
+export function interceptQueries (pool: any, intercept: QueryInterceptor): () => void {
+  const originalConnect = pool.connect
+  const originalQuery = pool.query
+
+  function wrap (target: any, original: any) {
+    return async function (query: any, ...rest: any[]) {
+      const run = () => original.call(target, query, ...rest)
+      const answer = await intercept(sqlOf(query), Array.isArray(rest[0]) ? rest[0] : query?.values, run)
+      if (answer !== undefined) return answer
+      return run()
+    }
+  }
+
+  pool.query = wrap(pool, originalQuery)
+  pool.connect = async function (callback?: unknown) {
+    // pg-pool's own query() checks a client out with a callback: leave that alone.
+    if (typeof callback === 'function') return originalConnect.call(pool, callback)
+    const client = await originalConnect.call(pool)
+    const clientQuery = client.query
+    const clientRelease = client.release
+    client.query = wrap(client, clientQuery)
+    client.release = function (...args: any[]) {
+      client.query = clientQuery
+      return clientRelease.apply(client, args)
+    }
+    return client
+  }
+
+  return () => {
+    pool.connect = originalConnect
+    pool.query = originalQuery
+  }
+}
+
+// Make every query whose SQL matches `pattern` reject.
+export function failQueries (pool: any, pattern: RegExp, error: Error = new Error('injected query failure')): () => void {
+  return interceptQueries(pool, (sql) => {
+    if (pattern.test(sql)) throw error
+  })
+}

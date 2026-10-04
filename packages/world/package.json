@@ -14,6 +14,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "coverage": "node --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-include-all --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test test/*.test.ts",
     "prepublishOnly": "npm run build",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",

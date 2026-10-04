@@ -347,6 +347,147 @@ describe('events', () => {
     assert.equal(unsupportedVersion.statusCode, 400)
   })
 
+  it('should reject missing and cross-application runs', async () => {
+    const missing = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/wrun_missing/events/batch`,
+      payload: {
+        events: [{ event: { eventType: 'wait_created', correlationId: 'missing', specVersion: 6, eventData: {} } }]
+      }
+    })
+    assert.equal(missing.statusCode, 404)
+
+    const other = await setupTest()
+    try {
+      const create = await other.app.inject({
+        method: 'POST',
+        url: `/api/v1/apps/${other.appId}/runs/null/events`,
+        payload: {
+          eventType: 'run_created',
+          specVersion: 6,
+          eventData: { deploymentId: 'v6', workflowName: 'batch-other-app', input: {} }
+        }
+      })
+      assert.equal(create.statusCode, 200)
+      const runId = JSON.parse(create.body).run.runId
+
+      const crossApp = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch`,
+        payload: {
+          events: [{ event: { eventType: 'wait_created', correlationId: 'cross-app', specVersion: 6, eventData: {} } }]
+        }
+      })
+      assert.equal(crossApp.statusCode, 404)
+    } finally {
+      await teardownTest(other)
+    }
+  })
+
+  it('should roll back writes when processing fails inside the transaction', async () => {
+    const create = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 6,
+        eventData: { deploymentId: 'v6', workflowName: 'batch-rollback', input: {} }
+      }
+    })
+    assert.equal(create.statusCode, 200)
+    const runId = JSON.parse(create.body).run.runId
+
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch`,
+      payload: {
+        events: [
+          {
+            event: {
+              eventType: 'step_created',
+              correlationId: 'rolled-back-step',
+              specVersion: 6,
+              eventData: { stepName: 'valid', input: { value: 1 } }
+            }
+          },
+          {
+            event: {
+              eventType: 'step_created',
+              correlationId: 'invalid-step',
+              specVersion: 6,
+              eventData: {}
+            }
+          }
+        ]
+      }
+    })
+    assert.equal(response.statusCode, 500)
+
+    const persisted = await ctx.app.pg.query(
+      `SELECT correlation_id FROM workflow_steps
+       WHERE run_id = $1 AND correlation_id IN ('rolled-back-step', 'invalid-step')`,
+      [runId]
+    )
+    assert.equal(persisted.rows.length, 0)
+
+    const events = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`
+    })
+    assert.equal(JSON.parse(events.body).data.length, 1)
+  })
+
+  it('should apply resolveData to every batch result', async () => {
+    const create = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+      payload: {
+        eventType: 'run_created',
+        specVersion: 6,
+        eventData: { deploymentId: 'v6', workflowName: 'batch-resolve-data', input: {} }
+      }
+    })
+    assert.equal(create.statusCode, 200)
+    const runId = JSON.parse(create.body).run.runId
+
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events/batch?resolveData=none`,
+      payload: {
+        events: [{
+          event: {
+            eventType: 'step_created',
+            correlationId: 'no-data-step',
+            specVersion: 6,
+            eventData: { stepName: 'hidden-input', input: { secret: true } }
+          }
+        }]
+      }
+    })
+    assert.equal(response.statusCode, 200)
+    const result = JSON.parse(response.body).results[0]
+    assert.equal(result.event.eventData, undefined)
+    assert.equal(result.step.input, undefined)
+  })
+
+  it('should reject a batch body larger than 20 MiB', async () => {
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/apps/${ctx.appId}/runs/wrun_oversized/events/batch`,
+      payload: {
+        events: [{
+          event: {
+            eventType: 'step_created',
+            correlationId: 'oversized',
+            specVersion: 6,
+            eventData: { stepName: 'oversized', input: 'x'.repeat(20 * 1024 * 1024) }
+          }
+        }]
+      }
+    })
+    assert.equal(response.statusCode, 413)
+  })
+
   it('should persist initial attributes and atomically apply attr_set events', async () => {
     const create = await ctx.app.inject({
       method: 'POST',
