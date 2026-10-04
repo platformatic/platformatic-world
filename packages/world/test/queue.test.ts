@@ -6,6 +6,7 @@ import { decode, encode } from 'cbor-x'
 import { SPEC_VERSION_SUPPORTS_CBOR_QUEUE_TRANSPORT } from '@workflow/world'
 import { createPlatformaticWorld } from '../src/index.ts'
 import { HttpClient } from '../src/lib/client.ts'
+import { createQueue } from '../src/lib/queue.ts'
 
 interface RecordedRequest {
   contentType: string
@@ -331,4 +332,75 @@ test('HTTP 400 errors are classified as WorkflowWorldError', async () => {
     await client.close()
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
+})
+
+function fakeQueueClient (respond: () => any) {
+  return { post: async () => respond() } as any
+}
+
+test('queue() resolves a null messageId when the service returns no body', async () => {
+  const { queue } = createQueue(fakeQueueClient(() => undefined), { deploymentVersion: 'v1' })
+  assert.deepEqual(await queue('__wkf_workflow_test' as any, {} as any), { messageId: null })
+})
+
+test('queue() treats a duplicate idempotency key as success', async () => {
+  const { queue } = createQueue(fakeQueueClient(() => {
+    throw Object.assign(new Error('duplicate'), { statusCode: 409 })
+  }), { deploymentVersion: 'v1' })
+  assert.deepEqual(await queue('__wkf_workflow_test' as any, {} as any), { messageId: null })
+})
+
+test('queue() rethrows other failures', async () => {
+  const { queue } = createQueue(fakeQueueClient(() => {
+    throw Object.assign(new Error('down'), { statusCode: 503 })
+  }), { deploymentVersion: 'v1' })
+  await assert.rejects(queue('__wkf_workflow_test' as any, {} as any), /down/)
+})
+
+test('createQueueHandler falls back to JSON for a CBOR-labelled JSON body', async () => {
+  const { createQueueHandler } = createQueue(fakeQueueClient(() => undefined), { deploymentVersion: 'v1' })
+  let received: any
+  const handler = createQueueHandler('__wkf_step_', async (message) => {
+    received = message
+    return { timeoutSeconds: 5 }
+  })
+
+  const res = await handler(new Request('http://localhost/step', {
+    method: 'POST',
+    headers: { 'content-type': 'application/cbor' },
+    body: JSON.stringify({
+      message: { runId: 'r1' },
+      meta: { queueName: '__wkf_step_name', messageId: 'm1', attempt: 1 }
+    })
+  }))
+
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), { timeoutSeconds: 5 })
+  assert.deepEqual(received, { runId: 'r1' })
+})
+
+test('createQueueHandler parses JSON when no content type is sent', async () => {
+  const { createQueueHandler } = createQueue(fakeQueueClient(() => undefined), { deploymentVersion: 'v1' })
+  const handler = createQueueHandler('__wkf_workflow_', async () => {})
+
+  const request = new Request('http://localhost/flow', {
+    method: 'POST',
+    body: Buffer.from(JSON.stringify({
+      message: {},
+      meta: { queueName: '__wkf_workflow_name', messageId: 'm1', attempt: 1 }
+    }))
+  })
+  assert.equal(request.headers.get('content-type'), null)
+
+  const res = await handler(request)
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), {})
+})
+
+test('isDeploymentUnavailableError is true only for 410', () => {
+  const { isDeploymentUnavailableError } = createQueue(fakeQueueClient(() => undefined), { deploymentVersion: 'v1' })
+  assert.equal(isDeploymentUnavailableError({ statusCode: 410 }), true)
+  assert.equal(isDeploymentUnavailableError({ statusCode: 500 }), false)
+  assert.equal(isDeploymentUnavailableError(new Error('socket hang up')), false)
+  assert.equal(isDeploymentUnavailableError(null), false)
 })

@@ -84,7 +84,7 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
             payloadJson, payloadBytes, encoding, delaySeconds]
         )
       } catch (err: any) {
-        if (err.code === '23505') throw new DuplicateIdempotencyKey(envelope.idempotencyKey || '')
+        if (err.code === '23505') throw new DuplicateIdempotencyKey(envelope.idempotencyKey)
         throw err
       }
 
@@ -112,7 +112,7 @@ async function queuePlugin (app: FastifyInstance): Promise<void> {
           payloadJson, payloadBytes, encoding]
       )
     } catch (err: any) {
-      if (err.code === '23505') throw new DuplicateIdempotencyKey(envelope.idempotencyKey || '')
+      if (err.code === '23505') throw new DuplicateIdempotencyKey(envelope.idempotencyKey)
       throw err
     }
 

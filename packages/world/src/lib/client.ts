@@ -142,25 +142,6 @@ export class HttpClient {
     return response.body.json()
   }
 
-  async getRaw (path: string, query?: QueryParams): Promise<Buffer> {
-    const response = await this.#pool.request({
-      method: 'GET',
-      path: this.#path(path, query),
-      headers: this.#authHeaders(),
-    })
-
-    if (response.statusCode >= 400) {
-      const text = await response.body.text()
-      throw createAPIError(response.statusCode, text)
-    }
-
-    const chunks: Buffer[] = []
-    for await (const chunk of response.body) {
-      chunks.push(Buffer.from(chunk))
-    }
-    return Buffer.concat(chunks)
-  }
-
   async getStream (path: string, query?: QueryParams): Promise<Readable> {
     const response = await this.#pool.request({
       method: 'GET',

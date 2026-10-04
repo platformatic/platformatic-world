@@ -385,3 +385,87 @@ test('start() skips handler registration in K8s (ICC handles it)', async () => {
     server.close()
   }
 })
+
+test('start() is a no-op without PORT', async () => {
+  const originalPort = process.env.PORT
+  delete process.env.PORT
+
+  const world = createPlatformaticWorld({
+    // Nothing listens here: start() must return before making a request.
+    serviceUrl: 'http://localhost:9',
+    appId: 'test-app',
+    deploymentVersion: 'v1',
+  })
+  try {
+    await world.start!()
+  } finally {
+    await world.close!()
+    if (originalPort) process.env.PORT = originalPort
+  }
+})
+
+test('stays at local when the shared context cannot be read', async () => {
+  const originalUrl = process.env.PLT_WORLD_SERVICE_URL
+  const originalWorldVersion = process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  const originalVersion = process.env.PLT_DEPLOYMENT_VERSION
+  const originalGlobal = (globalThis as any).platformatic
+
+  process.env.PLT_WORLD_SERVICE_URL = 'http://localhost:9999'
+  delete process.env.PLT_WORLD_DEPLOYMENT_VERSION
+  delete process.env.PLT_DEPLOYMENT_VERSION
+  ;(globalThis as any).platformatic = {
+    sharedContext: { get: () => { throw new Error('runtime is shutting down') } }
+  }
+
+  try {
+    const world = createWorld({ appId: 'test-app' })
+    assert.equal(await world.getDeploymentId(), 'local')
+    await world.close!()
+  } finally {
+    if (originalUrl) process.env.PLT_WORLD_SERVICE_URL = originalUrl
+    else delete process.env.PLT_WORLD_SERVICE_URL
+    if (originalWorldVersion) process.env.PLT_WORLD_DEPLOYMENT_VERSION = originalWorldVersion
+    if (originalVersion) process.env.PLT_DEPLOYMENT_VERSION = originalVersion
+    ;(globalThis as any).platformatic = originalGlobal
+  }
+})
+
+test('defaults the application ID when package.json is missing or unnamed', async () => {
+  const originalCwd = process.cwd()
+  const originalAppId = process.env.PLT_WORLD_APP_ID
+  const originalAppName = process.env.PLT_APP_NAME
+  delete process.env.PLT_WORLD_APP_ID
+  delete process.env.PLT_APP_NAME
+
+  const dir = join(tmpdir(), `plt-world-appname-${process.pid}`)
+  mkdirSync(dir, { recursive: true })
+
+  const seen: string[] = []
+  const server = createServer((req, res) => {
+    seen.push(req.url || '')
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end('{}')
+  })
+  await new Promise<void>((resolve) => { server.listen(0, resolve) })
+  const serviceUrl = `http://localhost:${(server.address() as any).port}`
+
+  try {
+    process.chdir(dir)
+    const missing = createWorld({ serviceUrl, deploymentVersion: 'v1' })
+    await missing.runs.get('run-1')
+    await missing.close!()
+
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ private: true }))
+    const unnamed = createWorld({ serviceUrl, deploymentVersion: 'v1' })
+    await unnamed.runs.get('run-2')
+    await unnamed.close!()
+
+    assert.deepEqual(seen, ['/api/v1/apps/default/runs/run-1', '/api/v1/apps/default/runs/run-2'])
+  } finally {
+    process.chdir(originalCwd)
+    if (originalAppId) process.env.PLT_WORLD_APP_ID = originalAppId
+    if (originalAppName) process.env.PLT_APP_NAME = originalAppName
+    rmSync(dir, { recursive: true, force: true })
+    server.close()
+  }
+})

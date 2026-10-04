@@ -75,8 +75,8 @@ jobs:
       - name: Build world package
         run: pnpm -C packages/world build
 
-      - name: Run tests with coverage
-        run: pnpm coverage
+      - name: Run tests
+        run: pnpm test
 
       - name: Build workflow service
         run: pnpm --filter @platformatic/workflow run build
@@ -99,6 +99,44 @@ jobs:
 
       - name: Run world integration tests
         run: node --test packages/world/test/client.test.ts
+
+  # Coverage runs on Node 26 only: the scripts use --test-coverage-include-all,
+  # which Node 24 rejects as a bad option. The `test` job keeps the suite itself
+  # honest on Node 24.
+  coverage:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: wf
+          POSTGRES_PASSWORD: wf
+          POSTGRES_DB: workflow
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U wf -d workflow"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+
+      - uses: pnpm/action-setup@v6
+
+      - name: Install dependencies
+        run: pnpm install
+
+      # Builds @platformatic/world first, then enforces the per-package
+      # line, branch and function thresholds.
+      - name: Run tests with coverage
+        run: pnpm coverage
 
   e2e:
     runs-on: ubuntu-latest

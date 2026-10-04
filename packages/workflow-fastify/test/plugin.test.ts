@@ -3,6 +3,8 @@ import assert from 'node:assert'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import Fastify from 'fastify'
 import workflowFastify from '../src/index.ts'
 
@@ -194,4 +196,112 @@ export const POST = async (req) => new Response(JSON.stringify({ handler: '${lab
 
   const hook = await app.inject({ method: 'GET', url: '/.well-known/workflow/v1/webhook/abc' })
   assert.strictEqual(hook.statusCode, 202)
+})
+
+test('defaults buildDir to the working directory and tolerates a manifest without workflows', async (t) => {
+  const dir = await makeBuildDir()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(join(dir, '.well-known/workflow/v1/manifest.json'), JSON.stringify({ version: '1' }))
+
+  const originalCwd = process.cwd()
+  process.chdir(dir)
+  t.after(() => process.chdir(originalCwd))
+
+  const app = Fastify()
+  t.after(() => app.close())
+  await app.register(workflowFastify, { register: false })
+  await app.ready()
+
+  assert.deepStrictEqual(app.workflows, {})
+  assert.strictEqual(app.workflowManifest.version, '1')
+})
+
+test('throws a clear error when a handler bundle is missing', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wf-fastify-missing-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await mkdir(join(dir, '.well-known/workflow/v1'), { recursive: true })
+
+  const app = Fastify()
+  t.after(() => app.close())
+  await assert.rejects(
+    app.register(workflowFastify, { buildDir: dir, register: false }).ready(),
+    // The three bundles load in parallel, so any of them may be reported first.
+    /workflow handler (flow|step|webhook) not found in/
+  )
+})
+
+test('forwards multi-value headers joined and skips unset ones', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'wf-fastify-headers-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const base = join(dir, '.well-known/workflow/v1')
+  await mkdir(base, { recursive: true })
+  const echo = `
+export const POST = async (req) => Response.json({
+  multi: req.headers.get('x-multi'),
+  unset: req.headers.has('x-unset')
+})
+`
+  await writeFile(join(base, 'flow.mjs'), echo)
+  await writeFile(join(base, 'step.mjs'), echo)
+  await writeFile(join(base, 'webhook.mjs'), echo)
+  await writeFile(join(base, 'manifest.json'), JSON.stringify({ workflows: {} }))
+
+  const app = Fastify()
+  t.after(() => app.close())
+  // A host-app hook can leave a header as an array or clear it to undefined.
+  app.addHook('onRequest', async (req) => {
+    req.headers['x-multi'] = ['a', 'b']
+    req.headers['x-unset'] = undefined
+  })
+  await app.register(workflowFastify, { buildDir: dir, register: false })
+
+  const res = await app.inject({ method: 'POST', url: '/.well-known/workflow/v1/flow', payload: 'x' })
+  assert.deepStrictEqual(res.json(), { multi: 'a, b', unset: false })
+})
+
+test('registers with the workflow service on ready and closes the world on close', async (t) => {
+  const dir = await makeBuildDir()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+
+  const registrations: any[] = []
+  const service = createServer((req, res) => {
+    let body = ''
+    req.on('data', (chunk: Buffer) => { body += chunk })
+    req.on('end', () => {
+      registrations.push({ url: req.url, body: JSON.parse(body) })
+      res.writeHead(201, { 'content-type': 'application/json' })
+      res.end('{}')
+    })
+  })
+  await new Promise<void>(resolve => service.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise<void>(resolve => service.close(() => resolve())))
+  const { port } = service.address() as AddressInfo
+
+  const saved = {
+    PLT_WORLD_SERVICE_URL: process.env.PLT_WORLD_SERVICE_URL,
+    PLT_WORLD_APP_ID: process.env.PLT_WORLD_APP_ID,
+    PLT_WORLD_DEPLOYMENT_VERSION: process.env.PLT_WORLD_DEPLOYMENT_VERSION,
+    PORT: process.env.PORT
+  }
+  process.env.PLT_WORLD_SERVICE_URL = `http://127.0.0.1:${port}`
+  process.env.PLT_WORLD_APP_ID = 'fastify-app'
+  process.env.PLT_WORLD_DEPLOYMENT_VERSION = 'v1'
+  process.env.PORT = '4321'
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+
+  const app = Fastify()
+  await app.register(workflowFastify, { buildDir: dir })
+  await app.ready()
+
+  assert.strictEqual(registrations.length, 1)
+  assert.strictEqual(registrations[0].url, '/api/v1/apps/fastify-app/handlers')
+  assert.strictEqual(registrations[0].body.deploymentVersion, 'v1')
+  assert.strictEqual(registrations[0].body.endpoints.workflow, 'http://localhost:4321/.well-known/workflow/v1/flow')
+
+  await app.close()
 })

@@ -276,19 +276,20 @@ async function streamsPlugin (app: FastifyInstance): Promise<void> {
 
           flushing = true
           const drain = async () => {
-            do {
-              pending = false
-              if (await flush()) cleanup()
-            } while (pending && !done)
+            try {
+              do {
+                pending = false
+                if (await flush()) cleanup()
+              } while (pending && !done)
+            } finally {
+              // Reset in the same synchronous step as the loop's exit check: an
+              // update can then never land between the two and be left waiting.
+              flushing = false
+            }
           }
-          const finish = () => {
-            flushing = false
-            if (pending && !done) onUpdate()
-          }
-          drain().then(finish, err => {
+          drain().catch(err => {
             cleanup()
             reply.raw.destroy(err as Error)
-            finish()
           })
         }
 

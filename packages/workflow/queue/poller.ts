@@ -132,7 +132,7 @@ async function failRun (client: pg.PoolClient, msg: any, failure: FailureDetail)
   )
 }
 
-async function ensureRunForWorkflowDelivery (client: pg.PoolClient, msg: any): Promise<void> {
+export async function ensureRunForWorkflowDelivery (client: pg.PoolClient, msg: any): Promise<void> {
   if (!msg.run_id) return
   let payload
   try {
@@ -210,9 +210,7 @@ async function finalizeFailure (client: pg.PoolClient, msg: any, failure: Failur
   // v5 dispatches background steps through the workflow queue, while v4 uses
   // a dedicated step queue. The payload is the authoritative discriminator.
   if (await failBackgroundStep(client, msg, failure)) return
-  if (isWorkflowQueue(msg.queue_name)) {
-    await failRun(client, msg, failure)
-  } else if (isStepQueue(msg.queue_name)) {
+  if (isWorkflowQueue(msg.queue_name) || isStepQueue(msg.queue_name)) {
     await failRun(client, msg, failure)
   }
 }
@@ -311,6 +309,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   let reclaimTimer: ReturnType<typeof setInterval> | null = null
   let safetyTimer: ReturnType<typeof setInterval> | null = null
   let listenClient: pg.Client | null = null
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let executing = false
   let pendingNotify = false
   // Messages currently being dispatched in their own task. They stay 'pending'
@@ -352,12 +351,12 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
 
   // Dedicated LISTEN client — not from the pool
   function setupListener (): void {
+    // Drop the previous connection, if any, before replacing it.
+    teardownListener()
     listenClient = new pg.Client({ connectionString })
     listenClient.on('error', (err) => {
       log.error({ err }, 'LISTEN connection error')
-      if (!stopped && leader.isLeader()) {
-        setTimeout(() => setupListener(), 1000)
-      }
+      scheduleReconnect()
     })
 
     listenClient.connect()
@@ -367,9 +366,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       })
       .catch((err) => {
         log.error({ err }, 'Failed to setup LISTEN connection')
-        if (!stopped && leader.isLeader()) {
-          setTimeout(() => setupListener(), 1000)
-        }
+        scheduleReconnect()
       })
 
     listenClient.on('notification', () => {
@@ -377,9 +374,23 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     })
   }
 
+  // One pending reconnect at most: a dropped connection reports more than one
+  // error, and a reconnect per error would open listeners nothing ever closes.
+  // The timer is tracked so a shutdown inside the retry window cancels it.
+  // Losing leadership stops polling, so `stopped` covers that case too.
+  function scheduleReconnect (): void {
+    if (reconnectTimer || stopped) return
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      setupListener()
+    }, 1000)
+  }
+
   function teardownListener (): void {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
     if (listenClient) {
-      listenClient.end().catch(() => {})
+      // Callback form: there is no promise left to reject unhandled.
+      listenClient.end(() => {})
       listenClient = null
     }
   }
@@ -405,8 +416,11 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   }
 
   async function executeOnce (): Promise<void> {
-    const client = await pool.connect()
+    let client: pg.PoolClient | undefined
     try {
+      // Inside the try: this runs un-awaited from timers and notifications, so
+      // a failed checkout must be logged rather than reject unhandled.
+      client = await pool.connect()
       // 1. Finalize failures for rows left at the retry ceiling by older pollers.
       const exhausted = await client.query(
         `SELECT * FROM workflow_queue_messages
@@ -450,7 +464,6 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
         )
 
         for (const msg of pending.rows) {
-          if (inFlight.has(msg.id)) continue
           inFlight.add(msg.id)
           // Fire-and-forget: the task owns its message's result handling.
           processMessage(msg)
@@ -464,7 +477,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
     } catch (err) {
       log.error({ err }, 'Executor error')
     } finally {
-      client.release()
+      client?.release()
     }
   }
 
@@ -507,15 +520,16 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
   }
 
   async function runReclaim (): Promise<void> {
-    if (stopped) return
-    const client = await pool.connect()
+    let client: pg.PoolClient | undefined
     try {
+      client = await pool.connect()
       const reclaimed = await reclaimExpiredDeliveries(client, log)
       if (reclaimed > 0) execute()
     } catch (err) {
+      // An interval callback: nothing awaits it, so a failed checkout is logged here.
       log.error({ err }, 'Delivery reclaim error')
     } finally {
-      client.release()
+      client?.release()
     }
   }
 
@@ -557,9 +571,7 @@ export function createPoller (pool: pg.Pool, connectionString: string, log: any)
       leader.start()
     },
     async stop () {
-      stopped = true
       stopPolling()
-      teardownListener()
       await leader.stop()
     },
   }

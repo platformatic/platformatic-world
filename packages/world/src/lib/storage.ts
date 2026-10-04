@@ -40,13 +40,11 @@ function serializeBatchForHttp (events: any[]): any[] {
 
 function tryRestoreBase64 (value: unknown): unknown {
   if (typeof value !== 'string' || value.length === 0) return value
-  try {
-    const buf = Buffer.from(value, 'base64')
-    if (buf.length > 0 && buf.toString('base64') === value) {
-      return new Uint8Array(buf)
-    }
-  } catch {
-    // Not base64
+  // Buffer.from never throws on a string: invalid base64 just decodes to
+  // something that does not round-trip.
+  const buf = Buffer.from(value, 'base64')
+  if (buf.length > 0 && buf.toString('base64') === value) {
+    return new Uint8Array(buf)
   }
   return value
 }
@@ -192,6 +190,9 @@ export function createStorage (client: HttpClient) {
       listByCorrelationId: async (params: any) => {
         const query = buildQuery(params)
         query.correlationId = params.correlationId
+        // v5 names the run: a correlation id is unique per run, not globally.
+        // v4 callers do not pass one and get the application-wide listing.
+        if (params.runId) query.runId = params.runId
         const result = await client.get('/events/by-correlation', query)
         return coerceResponseDates(result)
       },

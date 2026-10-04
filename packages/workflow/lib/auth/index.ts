@@ -90,13 +90,11 @@ async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<vo
 
     let applicationIds: number[] = []
 
-    if (validateK8s) {
-      const k8sResult = await validateK8s(token)
-      if (k8sResult) {
-        applicationIds = k8sResult.applicationIds
-        if (k8sResult.isAdmin) {
-          request.isAdmin = true
-        }
+    const k8sResult = await validateK8s(token)
+    if (k8sResult) {
+      applicationIds = k8sResult.applicationIds
+      if (k8sResult.isAdmin) {
+        request.isAdmin = true
       }
     }
 
@@ -147,7 +145,7 @@ async function authPlugin (app: FastifyInstance, config: AuthConfig): Promise<vo
         throw new Forbidden('app ID mismatch')
       }
       request.appId = result.rows[0].id
-    } else if (applicationIds.length > 0) {
+    } else {
       // No URL appId and multiple bindings — use the first
       request.appId = applicationIds[0]
     }
