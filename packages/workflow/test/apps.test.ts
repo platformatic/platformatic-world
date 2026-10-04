@@ -13,6 +13,19 @@ describe('apps - CRUD operations', () => {
     await teardownTest(ctx)
   })
 
+  it('advertises the optional batch event capability', async () => {
+    const response = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/capabilities`,
+    })
+
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(JSON.parse(response.body), {
+      specVersion: 6,
+      capabilities: { eventsCreateBatch: true },
+    })
+  })
+
   it('should create a new application', async () => {
     const appId = `crud-test-${Date.now()}`
     const response = await ctx.app.inject({

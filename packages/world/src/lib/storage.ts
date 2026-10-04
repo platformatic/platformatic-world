@@ -31,6 +31,13 @@ function serializeForHttp (data: any): any {
   return copy
 }
 
+function serializeBatchForHttp (events: any[]): any[] {
+  return events.map((item) => ({
+    ...item,
+    event: serializeForHttp(item.event),
+  }))
+}
+
 function tryRestoreBase64 (value: unknown): unknown {
   if (typeof value !== 'string' || value.length === 0) return value
   try {
@@ -141,6 +148,33 @@ export function createStorage (client: HttpClient) {
         // primary event before the runtime merges them into its log.
         if (Array.isArray(result?.events)) {
           for (const e of result.events) restoreEntity(e)
+        }
+        return result
+      },
+
+      // Optional SDK v5+ capability. The latest runtime uses this only for a
+      // clean, slot-numbered fan-out of step_created/wait_created events. Keep
+      // the wire shape deliberately close to the single-event API so older
+      // services remain unaffected when the method is absent.
+      createBatch: async (runId: string, events: any[], params?: any) => {
+        if (!Array.isArray(events) || events.length === 0) {
+          const err: any = new Error('createBatch requires at least one event')
+          err.name = 'WorkflowWorldError'
+          err.statusCode = 400
+          throw err
+        }
+        const result = await client.post(
+          `/runs/${runId}/events/batch`,
+          { events: serializeBatchForHttp(events) },
+          buildQuery(params)
+        )
+        if (Array.isArray(result?.results)) {
+          for (const item of result.results) {
+            if (item?.event) restoreEntity(item.event)
+            if (item?.run) restoreEntity(item.run)
+            if (item?.step) restoreEntity(item.step)
+            if (item?.wait) restoreEntity(item.wait)
+          }
         }
         return result
       },
