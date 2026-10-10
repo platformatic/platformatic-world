@@ -180,7 +180,7 @@ importers:
         version: link:../packages/world
       '@workflow/world':
         specifier: ^4.5.0
-        version: 4.5.0
+        version: 4.5.1
       next:
         specifier: ^16.0.0
         version: 16.3.8(@opentelemetry/api@1.9.1)(@types/node@24.19.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1961,6 +1961,9 @@ packages:
 
   '@workflow/world@4.5.0':
     resolution: {integrity: sha512-ubKnoyxEL9s9GbnUZAeoLFEPQ/GnsFU91GMeUlOMs9q/HEEQQiFUpNhff0Jv0OrrVLFBMkM4L1Xf6qLSOvFcfw==}
+
+  '@workflow/world@4.5.1':
+    resolution: {integrity: sha512-xDE+Y8BVuBmfdZIAy16bgzY343pD8vOJVN95kyFHXKQtKCa+m9wpKjxNMu7drV8fqCY28mUJg28ouSnkAtdqSQ==}
 
   '@workflow/world@5.0.1':
     resolution: {integrity: sha512-rO95deJNAId4DBS6/RylBthTYeKUR0SGUOJ7fg5ZCz4jMngI6xAbLTueXXFOS3dp8bDh+aYWgwSIKwuEKfjagQ==}
@@ -7035,6 +7038,11 @@ snapshots:
       - utf-8-validate
 
   '@workflow/world@4.5.0':
+    dependencies:
+      ulid: 3.0.2
+      zod: 4.3.6
+
+  '@workflow/world@4.5.1':
     dependencies:
       ulid: 3.0.2
       zod: 4.3.6
