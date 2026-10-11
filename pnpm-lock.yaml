@@ -260,7 +260,7 @@ importers:
         version: 3.72.0(supports-color@10.2.2)
       '@platformatic/service':
         specifier: ^3.71.0
-        version: 3.71.0(supports-color@10.2.2)
+        version: 3.72.0(supports-color@10.2.2)
       cbor-x:
         specifier: 1.6.6
         version: 1.6.6
@@ -1618,12 +1618,12 @@ packages:
     resolution: {integrity: sha512-l7rwGVUCBfkFeRL3pbk6JcKnLYzDZoKNZI1Zo/bvXdVoia9MlaBA07TyvbBKFw+Vi0npRsmkbg5sWSmDzB+Q9g==}
     engines: {node: '>=22.19.0'}
 
-  '@platformatic/scalar-theme@3.71.0':
-    resolution: {integrity: sha512-jWNEvRgfVM0+91JjEpffnUuSj/C2opU/F5XHQ96Uvpxc0GolS3RhsVudb593h3aQHGFzyyZlWGegqHHmE8o7nA==}
+  '@platformatic/scalar-theme@3.72.0':
+    resolution: {integrity: sha512-JOtQ/U8SoQjPoLmUgSqFXqQb58e7A6frDRLqHt+DTNOiapL4giAfPAWcZhqJsOmvtyvgVIOAGWaLVtJk2E7UJw==}
     engines: {node: '>=22.19.0'}
 
-  '@platformatic/service@3.71.0':
-    resolution: {integrity: sha512-lwcXN6dq7aNDSlVTZLc5hwXESIyOugVmGOm/LETSEGInLauFio5nVZbUOIwGYTmum80jBwMRMZwW91ZK4jWQgg==}
+  '@platformatic/service@3.72.0':
+    resolution: {integrity: sha512-7fHtnakWOuCpwMfqFKDQe/pqFHCGr4vHBz+tCAcb4QQ8X3+kkqGDK9ZMrVtTeTp8yaidq1skuN0bEIeVtKqX1A==}
     engines: {node: '>=22.19.0'}
 
   '@platformatic/telemetry@3.71.0':
@@ -6576,9 +6576,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@platformatic/scalar-theme@3.71.0': {}
+  '@platformatic/scalar-theme@3.72.0': {}
 
-  '@platformatic/service@3.71.0(supports-color@10.2.2)':
+  '@platformatic/service@3.72.0(supports-color@10.2.2)':
     dependencies:
       '@fastify/accepts': 5.0.6
       '@fastify/autoload': 6.5.1
@@ -6588,13 +6588,13 @@ snapshots:
       '@fastify/static': 10.1.5
       '@fastify/swagger': 9.9.1(supports-color@10.2.2)
       '@fastify/under-pressure': 9.2.0
-      '@platformatic/basic': 3.71.0(supports-color@10.2.2)
-      '@platformatic/foundation': 3.71.0(supports-color@10.2.2)
-      '@platformatic/generators': 3.71.0(supports-color@10.2.2)
-      '@platformatic/globals': 3.71.0
-      '@platformatic/metrics': 3.71.0
-      '@platformatic/scalar-theme': 3.71.0
-      '@platformatic/telemetry': 3.71.0(supports-color@10.2.2)
+      '@platformatic/basic': 3.72.0(supports-color@10.2.2)
+      '@platformatic/foundation': 3.72.0(supports-color@10.2.2)
+      '@platformatic/generators': 3.72.0(supports-color@10.2.2)
+      '@platformatic/globals': 3.72.0
+      '@platformatic/metrics': 3.72.0
+      '@platformatic/scalar-theme': 3.72.0
+      '@platformatic/telemetry': 3.72.0(supports-color@10.2.2)
       '@scalar/fastify-api-reference': 1.62.5
       '@types/node': 22.20.5
       '@types/ws': 8.18.2
