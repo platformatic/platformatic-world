@@ -171,7 +171,7 @@ importers:
         version: 9.39.5(jiti@2.7.0)(supports-color@10.2.2)
       neostandard:
         specifier: ^0.14.0
-        version: 0.14.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)
+        version: 0.14.1(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)
 
   e2e-v4:
     dependencies:
@@ -3393,8 +3393,8 @@ packages:
     resolution: {integrity: sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg==}
     engines: {node: '>=18'}
 
-  neostandard@0.14.0:
-    resolution: {integrity: sha512-11ZZgQdQrzdMqAo494FJzrSh5/lNtUyrx1mz7BVXcA9EpXCEBOz4WhVz5sG79VvoBG/4L5lZ8xjfHxng95CtFQ==}
+  neostandard@0.14.1:
+    resolution: {integrity: sha512-cEGi7ADMWJRTcdsZeDXCyA1ZeJLQPBq6HP9z9CE1ysu+CJOKYt59ADG0BT6ETonuF6xNXZbMiNc8S8prYys4aQ==}
     engines: {node: ^22.13.0 || >=24}
     hasBin: true
     peerDependencies:
@@ -8204,7 +8204,7 @@ snapshots:
     dependencies:
       content-type: 2.1.0
 
-  neostandard@0.14.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3):
+  neostandard@0.14.1(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3):
     dependencies:
       '@humanwhocodes/gitignore-to-minimatch': 1.0.2
       '@stylistic/eslint-plugin': 5.10.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))
