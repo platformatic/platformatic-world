@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify'
 const ulid = monotonicFactory()
 import { RunNotFound, BadRequest } from '../lib/errors.ts'
 import { workflowQueueName } from '../queue/names.ts'
-import { formatRun, encodeData } from './events.ts'
+import { formatRun, encodeData, decodeData } from './events.ts'
 
 async function runActionsPlugin (app: FastifyInstance): Promise<void> {
   // Replay a run — creates a NEW run with the same workflow and input,
@@ -35,13 +35,18 @@ async function runActionsPlugin (app: FastifyInstance): Promise<void> {
         [newRunId, appId, row.workflow_name, row.deployment_id, row.input, row.execution_context, row.spec_version]
       )
 
-      // Create run_created event
+      // Create run_created event. It must carry the same data as a client-
+      // created one: the SDK rebuilds the run from its event log and reads the
+      // input (and execution context) from this event, not from the run row.
+      // Without them the replayed run fails with "Invalid input".
       await client.query(
         `INSERT INTO workflow_events (run_id, application_id, event_type, event_data, spec_version)
          VALUES ($1, $2, 'run_created', $3, $4)`,
         [newRunId, appId, encodeData({
           workflowName: row.workflow_name,
           deploymentId: row.deployment_id,
+          input: decodeData(row.input),
+          executionContext: row.execution_context ?? undefined,
           replayedFrom: runId
         }), row.spec_version]
       )
