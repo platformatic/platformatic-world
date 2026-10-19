@@ -105,6 +105,7 @@ Migration `002.do.sql` adds `payload_bytes` + `payload_encoding` columns and an 
 | `K8S_API_SERVER` | `https://kubernetes.default.svc` | K8s API server (multi-tenant only) |
 | `K8S_ADMIN_SERVICE_ACCOUNT` | | Admin service account (`namespace:name`) |
 | `WF_ENABLE_POLLER` | `true` | Enable queue poller/dispatcher |
+| `WF_BODY_LIMIT_BYTES` | `20971520` (20 MB) | Max request body for event and stream writes |
 
 ## Kubernetes Deployment
 

@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import pg from 'pg'
 import type { FastifyInstance } from 'fastify'
 import { BadRequest } from '../lib/errors.ts'
+import { getBodyLimit } from '../lib/body-limit.ts'
 
 function isHealthCheckStream (name: string): boolean {
   return name.startsWith('__health_check__')
@@ -46,7 +47,9 @@ async function streamsPlugin (app: FastifyInstance): Promise<void> {
   }
 
   // Write chunk(s) to a stream
-  app.put('/api/v1/apps/:appId/runs/:runId/streams/:name', async (request, reply) => {
+  // A single write can carry a large chunk (e.g. a base64 image a step streams
+  // to the client), so it takes the same limit as the events routes.
+  app.put('/api/v1/apps/:appId/runs/:runId/streams/:name', { bodyLimit: getBodyLimit() }, async (request, reply) => {
     const { runId, name } = request.params as { runId: string; name: string }
     const appId = request.appId
     const isMulti = request.headers['x-stream-multi'] === 'true'
