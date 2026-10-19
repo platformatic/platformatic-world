@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { RunNotFound, BadRequest } from '../lib/errors.ts'
 import { checkRunQuota, checkEventQuota, checkEventBatchQuota } from '../lib/quotas.ts'
+import { getBodyLimit } from '../lib/body-limit.ts'
 import type pg from 'pg'
 
 const ATTRIBUTE_KEY_MAX_LENGTH = 256
@@ -373,6 +374,9 @@ async function countNewBatchEvents (client: pg.PoolClient, runId: string, appId:
 }
 
 async function eventsPlugin (app: FastifyInstance): Promise<void> {
+  // Shared with the streams route through WF_BODY_LIMIT_BYTES.
+  const bodyLimit = getBodyLimit()
+
   // Custom error handler to include meta in error responses (for SDK compatibility)
   app.setErrorHandler((error: any, _request, reply) => {
     const statusCode = error.statusCode || 500
@@ -391,7 +395,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
   // pre-claim pair on a slot-numbered run. Terminal, hook, attribute, and
   // retry transitions keep the single-event path so their ordering and retry
   // contracts remain unchanged.
-  app.post('/api/v1/apps/:appId/runs/:runId/events/batch', { bodyLimit: 20 * 1024 * 1024 }, async (request) => {
+  app.post('/api/v1/apps/:appId/runs/:runId/events/batch', { bodyLimit }, async (request) => {
     const { runId: rawRunId } = request.params as { runId: string }
     if (rawRunId === 'null') throw new BadRequest('events.createBatch requires an existing run')
 
@@ -554,7 +558,7 @@ async function eventsPlugin (app: FastifyInstance): Promise<void> {
   // Create event (main write path)
   // Raise body limit to 20 MB — step outputs can include generated images
   // (e.g. Gemini image generation) that exceed Fastify's 1 MB default.
-  app.post('/api/v1/apps/:appId/runs/:runId/events', { bodyLimit: 20 * 1024 * 1024 }, async (request) => {
+  app.post('/api/v1/apps/:appId/runs/:runId/events', { bodyLimit }, async (request) => {
     const { runId: rawRunId } = request.params as { runId: string }
     const body = request.body as any
     const appId = request.appId
