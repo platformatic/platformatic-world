@@ -68,6 +68,50 @@ describe('run-actions', () => {
     assert.equal(body.status, 'pending')
   })
 
+  async function runCreatedEventData (runId: string) {
+    const response = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/events`
+    })
+    const events = JSON.parse(response.body).data
+    return events.find((e: any) => e.eventType === 'run_created').eventData
+  }
+
+  it('should copy the input and execution context into the replayed run_created event', async () => {
+    // SDK payloads arrive base64-encoded ("devl" + devalue); plain JSON is also accepted.
+    const binaryInput = Buffer.from('devl[[1],"ORD-42"]').toString('base64')
+    for (const input of [binaryInput, { value: 42 }]) {
+      const response = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/apps/${ctx.appId}/runs/null/events`,
+        payload: {
+          eventType: 'run_created',
+          specVersion: 2,
+          eventData: { deploymentId: 'v1', workflowName: 'replay-input', input, executionContext: { nodeVersion: '22' } }
+        }
+      })
+      const run = JSON.parse(response.body).run
+      await startRun(run.runId)
+      await completeRun(run.runId)
+
+      const replayRes = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/apps/${ctx.appId}/runs/${run.runId}/replay`,
+        payload: {}
+      })
+      const replayed = JSON.parse(replayRes.body)
+
+      const original = await runCreatedEventData(run.runId)
+      const copy = await runCreatedEventData(replayed.runId)
+      assert.deepEqual(copy.input, original.input)
+      assert.deepEqual(copy.input, input)
+      assert.deepEqual(copy.executionContext, { nodeVersion: '22' })
+      assert.equal(copy.workflowName, 'replay-input')
+      assert.equal(copy.deploymentId, 'v1')
+      assert.equal(copy.replayedFrom, run.runId)
+    }
+  })
+
   it('should replay a run targeting the original version, not the current', async () => {
     const runV1 = await createRun('v1', 'version-check')
     await startRun(runV1.runId)
