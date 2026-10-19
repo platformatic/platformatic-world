@@ -396,4 +396,41 @@ describe('streams', () => {
     const names = JSON.parse(listRes.body) as string[]
     assert.ok(names.includes(streamName))
   })
+
+  it('should accept a chunk larger than 1 MB', async () => {
+    const streamName = `stream-large-${Date.now()}`
+    const large = 'a'.repeat(5 * 1024 * 1024)
+
+    const writeRes = await ctx.app.inject({
+      method: 'PUT',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/streams/${streamName}`,
+      headers: {
+        authorization: `Bearer ${ctx.apiKey}`,
+        'content-type': 'application/json',
+      },
+      payload: JSON.stringify(large),
+    })
+    assert.equal(writeRes.statusCode, 204)
+
+    const readRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/apps/${ctx.appId}/streams/${streamName}`,
+      headers: { authorization: `Bearer ${ctx.apiKey}` },
+    })
+    assert.equal(readRes.statusCode, 200)
+    assert.equal(readRes.body.length, large.length)
+  })
+
+  it('should reject a chunk larger than 20 MB', async () => {
+    const writeRes = await ctx.app.inject({
+      method: 'PUT',
+      url: `/api/v1/apps/${ctx.appId}/runs/${runId}/streams/stream-too-large-${Date.now()}`,
+      headers: {
+        authorization: `Bearer ${ctx.apiKey}`,
+        'content-type': 'application/json',
+      },
+      payload: JSON.stringify('a'.repeat(21 * 1024 * 1024)),
+    })
+    assert.equal(writeRes.statusCode, 413)
+  })
 })

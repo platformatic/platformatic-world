@@ -46,7 +46,10 @@ async function streamsPlugin (app: FastifyInstance): Promise<void> {
   }
 
   // Write chunk(s) to a stream
-  app.put('/api/v1/apps/:appId/runs/:runId/streams/:name', async (request, reply) => {
+  // A single write can carry a large chunk (e.g. a base64 image a step streams
+  // to the client), so allow the same 20 MB the events routes accept instead of
+  // Fastify's 1 MB default.
+  app.put('/api/v1/apps/:appId/runs/:runId/streams/:name', { bodyLimit: 20 * 1024 * 1024 }, async (request, reply) => {
     const { runId, name } = request.params as { runId: string; name: string }
     const appId = request.appId
     const isMulti = request.headers['x-stream-multi'] === 'true'
