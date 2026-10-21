@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { encode } from 'cbor-x'
 import {
   ensureRunForWorkflowDelivery, handleDispatchResult, handleExhaustedMessage, handleNoRoute,
-  reclaimExpiredDeliveries, sanitizeTargetUrl,
+  sanitizeTargetUrl,
 } from '../queue/poller.ts'
 import { getRetryDelay } from '../queue/retry.ts'
 import { setupTest, teardownTest, failQueries, type TestContext } from './helper.ts'
@@ -114,7 +114,7 @@ describe('poller failure finalization', () => {
       const msg = await createMessage({ runId: await createRun(), payloadBytes })
       await withClient(client => handleDispatchResult(client, msg, { success: true, statusCode: 200, timeoutSeconds: 30 }))
 
-      assert.equal((await message(msg.id)).status, 'delivered')
+      assert.equal((await message(msg.id)).status, 'acked')
       const deferred = await ctx.app.pg.query(
         "SELECT * FROM workflow_queue_messages WHERE run_id = $1 AND status = 'deferred'",
         [msg.run_id]
@@ -135,7 +135,7 @@ describe('poller failure finalization', () => {
       assert.equal(followUps.rows.length, 0)
 
       const msg = await createMessage({ runId: await createRun() })
-      const restore = failQueries(ctx.app.pg, /SET status = 'delivered'/)
+      const restore = failQueries(ctx.app.pg, /SET status = 'acked'/)
       try {
         await assert.rejects(
           withClient(client => handleDispatchResult(client, msg, { success: true, statusCode: 200 })),
@@ -280,29 +280,6 @@ describe('poller failure finalization', () => {
       })
       await withClient(client => handleExhaustedMessage(client, msg))
       assert.equal((await run(runId)).status, 'failed')
-    })
-  })
-
-  describe('reclaimExpiredDeliveries', () => {
-    it('logs and reports zero when finalizing an exhausted delivery fails', async () => {
-      const runId = await createRun()
-      const msg = await createMessage({ runId, status: 'delivered', attempts: 10 })
-      await ctx.app.pg.query("UPDATE workflow_queue_messages SET delivered_at = NOW() - INTERVAL '1 hour' WHERE id = $1", [msg.id])
-
-      const errors: any[] = []
-      const log = { warn () {}, info () {}, error (obj: any, text: string) { errors.push({ err: obj.err, text }) } }
-      const restore = failQueries(ctx.app.pg, /SET status = 'dead', last_failure = \$3/)
-      try {
-        const reclaimed = await withClient(client => reclaimExpiredDeliveries(client, log, 60))
-        assert.equal(reclaimed, 0)
-      } finally {
-        restore()
-      }
-      assert.equal(errors.length, 1)
-      assert.equal(errors[0].text, 'Delivery reclaim error')
-      assert.equal((await message(msg.id)).status, 'delivered')
-      assert.equal((await run(runId)).status, 'running')
-      await ctx.app.pg.query('DELETE FROM workflow_queue_messages WHERE id = $1', [msg.id])
     })
   })
 })

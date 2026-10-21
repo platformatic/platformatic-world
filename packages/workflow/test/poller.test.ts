@@ -213,7 +213,7 @@ describe('poller result handling', () => {
     assert.equal((await ctx.app.pg.query(
       'SELECT status FROM workflow_queue_messages WHERE id = $1',
       [inserted.rows[0].id]
-    )).rows[0].status, 'delivered')
+    )).rows[0].status, 'acked')
     const continuations = await ctx.app.pg.query(
       `SELECT id FROM workflow_queue_messages
        WHERE run_id = $1 AND queue_name = '__wkf_workflow_successful-continuation'
