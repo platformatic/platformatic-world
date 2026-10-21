@@ -151,8 +151,8 @@ describe('poller loop', () => {
     return (await ctx.app.pg.query('SELECT status FROM workflow_queue_messages WHERE id = $1', [id])).rows[0].status
   }
 
-  function delivered (id: number): Promise<boolean> {
-    return waitFor(async () => await status(id) === 'delivered', `message ${id} to be delivered`)
+  function acked (id: number): Promise<boolean> {
+    return waitFor(async () => await status(id) === 'acked', `message ${id} to be acked`)
   }
 
   it('dispatches on NOTIFY, retries unroutable messages, and finalizes exhausted ones', async () => {
@@ -170,7 +170,7 @@ describe('poller loop', () => {
       const exhausted = await enqueue({ runId, status: 'failed', attempts: 10 })
       await notify()
 
-      await delivered(routed.id)
+      await acked(routed.id)
       const dispatch = received.find(body => body.message.runId === routed.runId)
       assert.equal(dispatch.meta.queueName, '__wkf_workflow_loop')
       assert.equal(dispatch.meta.messageId, `msg_${routed.id}`)
@@ -191,7 +191,7 @@ describe('poller loop', () => {
       // A second poll reschedules the wake-up rather than stacking timers.
       await notify()
       assert.equal(await status(later.id), 'deferred')
-      await delivered(later.id)
+      await acked(later.id)
     })
   })
 
@@ -265,7 +265,7 @@ describe('poller loop', () => {
       const msg = await enqueue()
       await notify()
       await waitFor(() => logged(log, 'Dispatch task error'), 'the dispatch failure to be logged')
-      await delivered(msg.id)
+      await acked(msg.id)
       restore()
     })
   })
@@ -287,7 +287,7 @@ describe('poller loop', () => {
 
       const msg = await enqueue()
       await notify()
-      await delivered(msg.id)
+      await acked(msg.id)
     })
   })
 
@@ -354,7 +354,7 @@ describe('poller loop', () => {
     }
   })
 
-  it('reclaims expired deliveries on its interval and steps down when it loses the lock', async (t) => {
+  it('leaves acknowledged deliveries idle and resumes pending messages after regaining leadership', async (t) => {
     t.mock.timers.enable({ apis: ['setInterval', 'scheduler.wait'] })
     const pool = new pg.Pool({ connectionString: CONNECTION_STRING })
     const log = recordingLog()
@@ -374,28 +374,13 @@ describe('poller loop', () => {
          VALUES ($1, $2, 'loop', 'v-loop', 'running')`,
         [runId, applicationId]
       )
-      const stuck = await enqueue({ runId, status: 'delivered', delivered_at: new Date(Date.now() - 3_600_000) })
-      const idle = await enqueue({ status: 'delivered', delivered_at: new Date() })
-
-      // One reclaim interval: the stuck delivery is handed back and redelivered.
-      t.mock.timers.tick(60_000)
-      await waitFor(() => logged(log, 'Reclaimed delivered messages whose executor never reported back'), 'the reclaim')
-      await waitFor(async () => {
-        const row = await ctx.app.pg.query('SELECT status, attempts FROM workflow_queue_messages WHERE id = $1', [stuck.id])
-        return row.rows[0].status === 'delivered' && row.rows[0].attempts === 1
-      }, 'the reclaimed message to be redelivered')
-      assert.equal(await status(idle.id), 'delivered')
-
-      // A second interval finds nothing to reclaim.
-      t.mock.timers.tick(60_000)
-      await sleep(100)
-
-      // A reclaim that cannot get a connection is logged, not an unhandled rejection.
-      const restoreCheckouts = failCheckouts(pool)
-      t.mock.timers.tick(60_000)
-      const failure = await waitFor(() => logged(log, 'Delivery reclaim error'), 'the failed reclaim to be logged')
-      assert.equal(failure.err.message, 'pool exhausted')
-      restoreCheckouts()
+      const handled = await enqueue({ runId, attempts: 10 })
+      await notify()
+      await acked(handled.id)
+      await ctx.app.pg.query(
+        "UPDATE workflow_queue_messages SET delivered_at = NOW() - INTERVAL '2 hours' WHERE id = $1",
+        [handled.id]
+      )
 
       // The lock is gone on the next leadership check: polling stops.
       leader = false
@@ -409,7 +394,12 @@ describe('poller loop', () => {
       // Leadership returns: polling resumes and the waiting message is delivered.
       leader = true
       t.mock.timers.tick(10_000)
-      await delivered(orphan.id)
+      await acked(orphan.id)
+      const message = await ctx.app.pg.query('SELECT status, attempts FROM workflow_queue_messages WHERE id = $1', [handled.id])
+      assert.equal(message.rows[0].status, 'acked')
+      assert.equal(message.rows[0].attempts, 10)
+      assert.equal((await ctx.app.pg.query('SELECT status FROM workflow_runs WHERE id = $1', [runId])).rows[0].status, 'running')
+      assert.equal(received.filter(body => body.message.runId === runId).length, 1)
     } finally {
       restore()
       const stopping = poller.stop()
