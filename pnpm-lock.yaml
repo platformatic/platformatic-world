@@ -262,8 +262,8 @@ importers:
         specifier: ^3.71.0
         version: 3.72.0(supports-color@10.2.2)
       cbor-x:
-        specifier: 1.6.6
-        version: 1.6.6
+        specifier: 1.6.8
+        version: 1.6.8
       fastify:
         specifier: ^5.3.3
         version: 5.12.7
@@ -321,8 +321,8 @@ importers:
         specifier: ^3.71.0
         version: 3.72.0
       cbor-x:
-        specifier: 1.6.6
-        version: 1.6.6
+        specifier: 1.6.8
+        version: 1.6.8
       undici:
         specifier: ^8.0.0
         version: 8.12.2
@@ -2246,8 +2246,8 @@ packages:
   cbor-x@1.6.0:
     resolution: {integrity: sha512-0kareyRwHSkL6ws5VXHEf8uY1liitysCVJjlmhaLG+IXLqhSaOO+t63coaso7yjwEzWZzLy8fJo06gZDVQM9Qg==}
 
-  cbor-x@1.6.6:
-    resolution: {integrity: sha512-8QiD9PGOxyQHo7s2pzwTBH6lTjqekxPdl9Aq6fXvZgCuCJHOht1puDEA/fTr6mciB76c+M+Gi0qT2i1a4pm4Wg==}
+  cbor-x@1.6.8:
+    resolution: {integrity: sha512-wUtIwq2J+Y2bEvDpdJj0z9QIX+PGMzms489HFvNwr0V8Zq3ejqOdZKTaTe6Zru8WU0IwuRDtpys3nUF4LDRKAQ==}
 
   chalk@4.1.2:
     resolution: {integrity: sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA==}
@@ -7066,7 +7066,7 @@ snapshots:
     optionalDependencies:
       cbor-extract: 2.2.2
 
-  cbor-x@1.6.6:
+  cbor-x@1.6.8:
     optionalDependencies:
       cbor-extract: 2.2.2
 
