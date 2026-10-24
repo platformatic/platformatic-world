@@ -214,7 +214,7 @@ importers:
         version: link:../packages/world
       '@workflow/world':
         specifier: ^5.0.1
-        version: 5.0.4
+        version: 5.0.5
       next:
         specifier: ^16.0.0
         version: 16.4.2(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -332,7 +332,7 @@ importers:
         version: 24.19.2
       '@workflow/world':
         specifier: ^5.0.1
-        version: 5.0.4
+        version: 5.0.5
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -1954,6 +1954,9 @@ packages:
 
   '@workflow/world@5.0.4':
     resolution: {integrity: sha512-Z6vMtfl03vBShRNj83yGdKvF8F7WieL6hNA0im6f/EJlVPVNAHYCtiqTMUS6BVYNOYVpTXtzsArbXAw28S5qDg==}
+
+  '@workflow/world@5.0.5':
+    resolution: {integrity: sha512-/Kg87kfZheyLrGjUo0HYXIs0yHSI/8VMWUeoBjfFfecmOgX9XufnsWisYiGiqX6mRzrl+6exorgw043BnLWnXQ==}
 
   '@xhmikosr/archive-type@8.1.0':
     resolution: {integrity: sha512-EXOjEbnZFE5c/nFMf4FOrEURVanzHpnkPYmnmr78u02/8hAhE0FMq8p9TK1IM0/bFr5VcyBUY0gfLm8f7dKy+Q==}
@@ -6626,6 +6629,11 @@ snapshots:
       zod: 4.3.6
 
   '@workflow/world@5.0.4':
+    dependencies:
+      ulid: 3.0.2
+      zod: 4.5.4
+
+  '@workflow/world@5.0.5':
     dependencies:
       ulid: 3.0.2
       zod: 4.5.4
