@@ -319,7 +319,7 @@ importers:
     dependencies:
       '@platformatic/globals':
         specifier: ^3.71.0
-        version: 3.72.0
+        version: 3.75.0
       cbor-x:
         specifier: 1.6.8
         version: 1.6.8
@@ -1372,6 +1372,10 @@ packages:
 
   '@platformatic/globals@3.72.0':
     resolution: {integrity: sha512-U9peexfftZUdP6jdwqVWhwmcQnV2agsJnGFBaEVGEpSVTDJHZ4GmZS3w0+ip7J52WOeWK0ZdUUFprhUU3f8iuw==}
+    engines: {node: '>=22.19.0'}
+
+  '@platformatic/globals@3.75.0':
+    resolution: {integrity: sha512-724+nH28iLaSZ1hgUHc5OUEziBaiI/R25HezYlkrDqgD9k0HA3d0raQD2RcVnncy//k6KBI81UCtL3z47K6MDA==}
     engines: {node: '>=22.19.0'}
 
   '@platformatic/http-metrics@0.3.0':
@@ -5514,6 +5518,12 @@ snapshots:
       - supports-color
 
   '@platformatic/globals@3.72.0':
+    dependencies:
+      '@opentelemetry/api': 1.9.1
+      '@platformatic/prom-client': 1.0.0
+      pino: 9.14.0
+
+  '@platformatic/globals@3.75.0':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@platformatic/prom-client': 1.0.0
