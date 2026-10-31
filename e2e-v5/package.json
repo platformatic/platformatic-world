@@ -18,7 +18,7 @@
     "workflow": "^5.0.1"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "@types/pg": "^8.18.0",
     "@types/react": "^19.0.0",
     "pg": "^8.20.0",
