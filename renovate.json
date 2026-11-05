@@ -16,6 +16,12 @@
   "prHourlyLimit": 10,
   "packageRules": [
     {
+      "groupName": "Platformatic packages",
+      "matchSourceUrls": [
+        "https://github.com/platformatic/platformatic"
+      ]
+    },
+    {
       "matchUpdateTypes": [
         "minor",
         "patch",
