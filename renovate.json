@@ -4,6 +4,8 @@
     "config:base"
   ],
   "rangeStrategy": "update-lockfile",
+  "minimumReleaseAge": "1 day",
+  "internalChecksFilter": "strict",
   "ignoreDeps": [
     "camelcase",
     "mysql",
@@ -19,7 +21,8 @@
       "groupName": "Platformatic packages",
       "matchSourceUrls": [
         "https://github.com/platformatic/platformatic"
-      ]
+      ],
+      "minimumReleaseAge": null
     },
     {
       "matchUpdateTypes": [
