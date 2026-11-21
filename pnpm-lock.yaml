@@ -257,7 +257,7 @@ importers:
     dependencies:
       '@fastify/autoload':
         specifier: ^6.0.3
-        version: 6.5.1
+        version: 6.6.0
       '@fastify/error':
         specifier: ^4.1.0
         version: 4.2.1
@@ -639,8 +639,8 @@ packages:
   '@fastify/ajv-compiler@4.0.7':
     resolution: {integrity: sha512-VP0yIfwlc1ohj733keYDqyHm1VWeP9VQxYomunhr90jkC4aNNibbkrRiaNgPgqj1ORxUenILR4qzA/ppYBNAtQ==}
 
-  '@fastify/autoload@6.5.1':
-    resolution: {integrity: sha512-IW2DyejF1+SEEDTwbJriAcKtMcAy+y1cK04ZQj3p7WwwR/zgN+YYxzmM96L+AP48nNOCNKBGpyYJzgZ1HnubKA==}
+  '@fastify/autoload@6.6.0':
+    resolution: {integrity: sha512-AuPwbdsc0PUlfGXx6NgSoP2HnNg5qV1jV+hezugkvQnJ3O4ygaCxF6Xdr5pgNm3t2mokXXmIW4HOLeSdqiAR+A==}
 
   '@fastify/basic-auth@6.3.1':
     resolution: {integrity: sha512-g6rbj93uDVESth5Zo7DWfWEZS9RCbDS9LXMLEk7jPvhWA9xGAxeZ3EVp5rNUV1jO8OFV433Ykcc9pXu68o+13Q==}
@@ -4814,7 +4814,7 @@ snapshots:
       ajv-formats: 3.0.1
       fast-uri: 4.2.3
 
-  '@fastify/autoload@6.5.1': {}
+  '@fastify/autoload@6.6.0': {}
 
   '@fastify/basic-auth@6.3.1':
     dependencies:
@@ -5771,7 +5771,7 @@ snapshots:
   '@platformatic/service@3.79.0(supports-color@10.2.2)':
     dependencies:
       '@fastify/accepts': 5.0.7
-      '@fastify/autoload': 6.5.1
+      '@fastify/autoload': 6.6.0
       '@fastify/cors': 11.3.1
       '@fastify/deepmerge': 3.2.4
       '@fastify/error': 4.2.1
